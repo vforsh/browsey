@@ -1,0 +1,46 @@
+{
+  "name": "@vforsh/browsey",
+  "version": "0.1.0",
+  "description": "Mobile-friendly web file browser CLI",
+  "type": "module",
+  "bin": {
+    "browsey": "dist/browsey"
+  },
+  "main": "./dist/browsey",
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "bun run scripts/build.ts",
+    "dev": "bun run src/bin.ts",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "commander": "^14.0.0",
+    "qrcode-terminal": "^0.12.0"
+  },
+  "devDependencies": {
+    "@types/qrcode-terminal": "^0.12.2",
+    "@types/bun": "latest",
+    "typescript": "^5.7.0"
+  },
+  "engines": {
+    "bun": ">=1.1.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vforsh/browsey.git"
+  },
+  "author": "vforsh",
+  "license": "MIT",
+  "keywords": [
+    "file-browser",
+    "file-server",
+    "mobile",
+    "cli"
+  ]
+}
