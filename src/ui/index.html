@@ -37,6 +37,16 @@
     <div class="viewer-header">
       <div class="viewer-filename" id="viewer-filename"></div>
       <div class="viewer-actions">
+        <button class="btn-icon" id="viewer-prev" aria-label="Previous" hidden>
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M15 18l-6-6 6-6"/>
+          </svg>
+        </button>
+        <button class="btn-icon" id="viewer-next" aria-label="Next" hidden>
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M9 18l6-6-6-6"/>
+          </svg>
+        </button>
         <button class="btn-icon" id="viewer-download" aria-label="Download">
           <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
@@ -53,6 +63,22 @@
       </div>
     </div>
     <div class="viewer-content" id="viewer-content"></div>
+  </div>
+
+  <!-- Info Modal -->
+  <div class="info-overlay" id="info-overlay" hidden>
+    <div class="info-modal">
+      <div class="info-header">
+        <div class="info-title" id="info-title">File Info</div>
+        <button class="btn-icon" id="info-close" aria-label="Close">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18"/>
+            <line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
+      <div class="info-content" id="info-content"></div>
+    </div>
   </div>
 
   <script src="/app.js"></script>

@@ -1,5 +1,7 @@
 # Browsey
 
+A zero-config CLI that serves a directory over HTTP with a mobile-friendly UI. Useful when you need to quickly grab files from your dev machine on a phone or tablet—run `browsey`, scan the QR code, done. No cloud, no auth, just a local server.
+
 A mobile-friendly web file browser CLI tool built with Bun.
 
 Start a local web server to browse files from any device on your network - perfect for quickly accessing files on your computer from your phone or tablet.
@@ -28,7 +30,7 @@ bunx @vforsh/browsey
 ## Usage
 
 ```bash
-# Serve current directory
+# Serve current directory (QR on, readonly, no auto-open)
 browsey
 
 # Serve a specific directory
@@ -37,8 +39,14 @@ browsey ./photos
 # Custom port
 browsey -p 3000
 
-# Show QR code for mobile access
-browsey --qr
+# Allow file modifications
+browsey --no-readonly
+
+# Open browser automatically
+browsey --open
+
+# Disable QR code
+browsey --no-qr
 
 # Ignore patterns
 browsey -i "node_modules,.git,*.log"
@@ -47,7 +55,7 @@ browsey -i "node_modules,.git,*.log"
 browsey --hidden
 
 # All options
-browsey ./my-folder -p 8080 -h 0.0.0.0 -i "node_modules,.git" --hidden --qr
+browsey ./my-folder -p 8080 -h 0.0.0.0 -i "node_modules,.git" --hidden --open
 ```
 
 ## Options
@@ -59,8 +67,11 @@ browsey ./my-folder -p 8080 -h 0.0.0.0 -i "node_modules,.git" --hidden --qr
 | `-h, --host <host>` | Host to bind | `0.0.0.0` |
 | `-i, --ignore <globs>` | Comma-separated ignore patterns | - |
 | `--hidden` | Show hidden files | `false` |
-| `--qr` | Display QR code for mobile | `false` |
-| `--no-open` | Don't open browser automatically | - |
+| `--open` | Open browser automatically | `false` |
+| `--no-qr` | Disable QR code | - |
+| `--no-readonly` | Allow file modifications | - |
+| `--readonly` | Read-only mode | `true` |
+| `--qr` | Display QR code for mobile | `true` |
 
 ## API
 

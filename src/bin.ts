@@ -18,18 +18,18 @@ program
   .option('-p, --port <port>', 'Port to listen on', '8080')
   .option('-h, --host <host>', 'Host to bind to', '0.0.0.0')
   .option('-i, --ignore <globs>', 'Ignore patterns (comma-separated)')
-  .option('--no-open', 'Do not open browser automatically')
-  .option('--readonly', 'Disable file modifications (download only)')
+  .option('--open', 'Open browser automatically')
+  .option('--no-readonly', 'Allow file modifications')
   .option('--hidden', 'Show hidden files')
-  .option('--qr', 'Display QR code for mobile access')
+  .option('--no-qr', 'Do not display QR code')
   .addHelpText(
     'after',
     `
 Examples:
   $ browsey
   $ browsey ./my-folder -p 3000
-  $ browsey --readonly --qr
-  $ browsey . -h localhost --no-open
+  $ browsey --no-readonly --open
+  $ browsey . -h localhost --no-qr
   $ browsey -i "node_modules,*.log,.git"
 `
   )
@@ -50,10 +50,10 @@ Examples:
       root: resolve(pathArg),
       port,
       host,
-      open: options.open as boolean,
-      readonly: (options.readonly as boolean) ?? false,
+      open: (options.open as boolean) ?? false,
+      readonly: (options.readonly as boolean) ?? true,
       showHidden: (options.hidden as boolean) ?? false,
-      showQR: (options.qr as boolean) ?? false,
+      showQR: (options.qr as boolean) ?? true,
       ignorePatterns: parseIgnorePatterns(options.ignore as string | undefined),
     })
   })

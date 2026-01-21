@@ -119,7 +119,7 @@ export async function startServer(options: ServerOptions): Promise<void> {
   console.log()
 
   if (options.open) {
-    openBrowser(localUrl)
+    openBrowser(networkUrl ?? localUrl)
   }
 
   const shutdown = () => {

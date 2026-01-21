@@ -7,12 +7,14 @@ import {
   Folder,
   FolderOpen,
   Image,
+  Info,
   Music,
   Video,
   TriangleAlert,
 } from 'lucide-static'
 import hljs from 'highlight.js'
 import { marked } from 'marked'
+import { markedHighlight } from 'marked-highlight'
 
 type FileItem = {
   name: string
@@ -31,6 +33,20 @@ type ListResponse = {
 type ViewResponse =
   | { type: 'text'; filename: string; extension: string | null; content: string; size: number }
   | { type: 'image'; filename: string; extension: string | null; url: string; size: number }
+
+type StatResponse = {
+  name: string
+  type: 'file' | 'directory'
+  size: number
+  modified: string
+  created: string
+  extension: string | null
+}
+
+type ImageNavContext = {
+  paths: string[]
+  index: number
+}
 
 // Extensions that can be viewed
 const VIEWABLE_TEXT_EXTENSIONS = new Set([
@@ -147,16 +163,23 @@ class FileViewer {
   private filename: HTMLElement
   private downloadBtn: HTMLElement
   private closeBtn: HTMLElement
+  private prevBtn: HTMLButtonElement
+  private nextBtn: HTMLButtonElement
   private currentPath: string | null = null
+  private imageNav: ImageNavContext | null = null
   private onClose?: () => void
+  private onNavigate?: (path: string) => void
 
-  constructor(onClose?: () => void) {
+  constructor(onClose?: () => void, onNavigate?: (path: string) => void) {
     this.overlay = document.getElementById('viewer-overlay')!
     this.content = document.getElementById('viewer-content')!
     this.filename = document.getElementById('viewer-filename')!
     this.downloadBtn = document.getElementById('viewer-download')!
     this.closeBtn = document.getElementById('viewer-close')!
+    this.prevBtn = document.getElementById('viewer-prev') as HTMLButtonElement
+    this.nextBtn = document.getElementById('viewer-next') as HTMLButtonElement
     this.onClose = onClose
+    this.onNavigate = onNavigate
 
     this.setupEventListeners()
     this.setupMarked()
@@ -165,50 +188,105 @@ class FileViewer {
   private setupEventListeners(): void {
     this.closeBtn.addEventListener('click', () => this.close())
     this.downloadBtn.addEventListener('click', () => this.download())
+    this.prevBtn.addEventListener('click', () => this.navigatePrev())
+    this.nextBtn.addEventListener('click', () => this.navigateNext())
     this.overlay.addEventListener('click', (event) => {
       if (event.target !== this.overlay) return
       this.close()
     })
 
-    // Close on ESC
+    // Close on ESC, navigate on arrows
     document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && !this.overlay.hidden) {
+      if (this.overlay.hidden) return
+      if (e.key === 'Escape') {
         this.close()
+      } else if (e.key === 'ArrowLeft') {
+        this.navigatePrev()
+      } else if (e.key === 'ArrowRight') {
+        this.navigateNext()
       }
     })
 
-    // Swipe down to close on mobile
+    // Swipe handling for mobile
+    let touchStartX = 0
     let touchStartY = 0
     this.overlay.addEventListener('touchstart', (e) => {
+      touchStartX = e.touches[0]?.clientX ?? 0
       touchStartY = e.touches[0]?.clientY ?? 0
     }, { passive: true })
 
     this.overlay.addEventListener('touchend', (e) => {
+      const touchEndX = e.changedTouches[0]?.clientX ?? 0
       const touchEndY = e.changedTouches[0]?.clientY ?? 0
-      const delta = touchEndY - touchStartY
-      if (delta > 100 && this.content.scrollTop === 0) {
+      const deltaX = touchEndX - touchStartX
+      const deltaY = touchEndY - touchStartY
+
+      // Horizontal swipe for image navigation
+      if (Math.abs(deltaX) > 80 && Math.abs(deltaX) > Math.abs(deltaY) * 1.5) {
+        if (deltaX < 0) {
+          this.navigateNext()
+        } else {
+          this.navigatePrev()
+        }
+        return
+      }
+
+      // Swipe down to close
+      if (deltaY > 100 && this.content.scrollTop === 0) {
         this.close()
       }
     }, { passive: true })
   }
 
-  private setupMarked(): void {
-    // Configure marked to use highlight.js for code blocks
-    marked.setOptions({
-      highlight: (code: string, lang: string) => {
-        if (lang && hljs.getLanguage(lang)) {
-          return hljs.highlight(code, { language: lang }).value
-        }
-        return hljs.highlightAuto(code).value
-      },
-    })
+  private navigatePrev(): void {
+    if (!this.imageNav || this.imageNav.index <= 0) return
+    const newPath = this.imageNav.paths[this.imageNav.index - 1]
+    if (!newPath) return
+    this.onNavigate?.(newPath)
   }
 
-  async open(path: string): Promise<void> {
+  private navigateNext(): void {
+    if (!this.imageNav || this.imageNav.index >= this.imageNav.paths.length - 1) return
+    const newPath = this.imageNav.paths[this.imageNav.index + 1]
+    if (!newPath) return
+    this.onNavigate?.(newPath)
+  }
+
+  private updateNavButtons(): void {
+    if (!this.imageNav) {
+      this.prevBtn.hidden = true
+      this.nextBtn.hidden = true
+      return
+    }
+
+    this.prevBtn.hidden = false
+    this.nextBtn.hidden = false
+    this.prevBtn.disabled = this.imageNav.index <= 0
+    this.nextBtn.disabled = this.imageNav.index >= this.imageNav.paths.length - 1
+  }
+
+  private setupMarked(): void {
+    // Configure marked to use highlight.js for code blocks
+    marked.use(
+      markedHighlight({
+        langPrefix: 'hljs language-',
+        highlight: (code: string, lang: string) => {
+          if (lang && hljs.getLanguage(lang)) {
+            return hljs.highlight(code, { language: lang }).value
+          }
+          return hljs.highlightAuto(code).value
+        },
+      })
+    )
+  }
+
+  async open(path: string, imageNav?: ImageNavContext): Promise<void> {
     this.currentPath = path
+    this.imageNav = imageNav ?? null
     this.overlay.hidden = false
     this.content.innerHTML = '<div class="viewer-loading">Loading...</div>'
     this.filename.textContent = path.split('/').pop() || ''
+    this.updateNavButtons()
 
     try {
       const response = await fetch(`/api/view?path=${encodeURIComponent(path)}`)
@@ -290,7 +368,9 @@ class FileViewer {
   private closeInternal(shouldNotify: boolean): void {
     this.overlay.hidden = true
     this.currentPath = null
+    this.imageNav = null
     this.content.innerHTML = ''
+    this.updateNavButtons()
     if (!shouldNotify) return
     this.onClose?.()
   }
@@ -312,8 +392,127 @@ class FileViewer {
   }
 }
 
+class InfoModal {
+  private overlay: HTMLElement
+  private content: HTMLElement
+  private title: HTMLElement
+  private closeBtn: HTMLElement
+
+  constructor() {
+    this.overlay = document.getElementById('info-overlay')!
+    this.content = document.getElementById('info-content')!
+    this.title = document.getElementById('info-title')!
+    this.closeBtn = document.getElementById('info-close')!
+
+    this.setupEventListeners()
+  }
+
+  private setupEventListeners(): void {
+    this.closeBtn.addEventListener('click', (e) => {
+      e.stopPropagation()
+      this.close()
+    })
+    this.overlay.addEventListener('click', (event) => {
+      const modal = this.overlay.querySelector('.info-modal')
+      if (modal && modal.contains(event.target as Node)) return
+      this.close()
+    })
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && !this.overlay.hidden) {
+        e.stopPropagation()
+        this.close()
+      }
+    })
+  }
+
+  async open(path: string, absolutePath?: string): Promise<void> {
+    if (!path) return
+
+    this.overlay.hidden = false
+    this.title.textContent = path.split('/').pop() || 'Info'
+    this.content.innerHTML = '<div class="info-loading">Loading...</div>'
+
+    try {
+      const response = await fetch(`/api/stat?path=${encodeURIComponent(path)}`)
+      if (!response.ok) {
+        const error = await response.json()
+        throw new Error(error.error || 'Failed to load info')
+      }
+
+      const data: StatResponse = await response.json()
+      this.render(data, absolutePath)
+    } catch (error) {
+      this.content.innerHTML = `<div class="info-error">${this.escapeHtml(error instanceof Error ? error.message : 'Failed to load')}</div>`
+    }
+  }
+
+  private render(data: StatResponse, absolutePath?: string): void {
+    const rows: Array<{ label: string; value: string }> = [
+      { label: 'Name', value: data.name },
+      { label: 'Type', value: data.type === 'directory' ? 'Folder' : 'File' },
+    ]
+
+    if (data.type === 'file') {
+      rows.push({ label: 'Size', value: this.formatSize(data.size) })
+    }
+
+    if (data.extension) {
+      rows.push({ label: 'Extension', value: data.extension })
+    }
+
+    rows.push({ label: 'Modified', value: this.formatDateTime(data.modified) })
+    rows.push({ label: 'Created', value: this.formatDateTime(data.created) })
+
+    if (absolutePath) {
+      rows.push({ label: 'Path', value: absolutePath })
+    }
+
+    this.content.innerHTML = rows
+      .map(
+        (row) => `
+        <div class="info-row">
+          <div class="info-label">${this.escapeHtml(row.label)}</div>
+          <div class="info-value">${this.escapeHtml(row.value)}</div>
+        </div>
+      `
+      )
+      .join('')
+  }
+
+  private close(): void {
+    this.overlay.hidden = true
+    this.content.innerHTML = ''
+  }
+
+  private formatSize(bytes: number): string {
+    if (bytes < 1024) return `${bytes} B`
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+    if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+    return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`
+  }
+
+  private formatDateTime(iso: string): string {
+    const date = new Date(iso)
+    return date.toLocaleString(undefined, {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    })
+  }
+
+  private escapeHtml(text: string): string {
+    const div = document.createElement('div')
+    div.textContent = text
+    return div.innerHTML
+  }
+}
+
 class FileBrowser {
   private currentPath = '/'
+  private currentItems: FileItem[] = []
   private fileList: HTMLElement
   private pathDisplay: HTMLElement
   private loading: HTMLElement
@@ -321,18 +520,41 @@ class FileBrowser {
   private pullStartY: number | null = null
   private pullTriggered = false
   private viewer: FileViewer
+  private infoModal: InfoModal
 
   constructor() {
     this.fileList = document.getElementById('file-list')!
     this.pathDisplay = document.getElementById('path-display')!
     this.loading = document.getElementById('loading')!
     this.toast = document.getElementById('toast')!
-    this.viewer = new FileViewer(() => this.handleViewerClose())
+    this.viewer = new FileViewer(
+      () => this.handleViewerClose(),
+      (path) => this.handleViewerNavigate(path)
+    )
+    this.infoModal = new InfoModal()
 
     this.setupEventListeners()
     this.setupPullToRefresh()
     window.addEventListener('popstate', () => this.handlePopState())
     this.loadFromLocation()
+  }
+
+  private getImageNavContext(imagePath: string): ImageNavContext | undefined {
+    const imagePaths = this.currentItems
+      .filter((item) => item.type === 'file' && isViewable(item.extension) === 'image')
+      .map((item) => (this.currentPath === '/' ? `/${item.name}` : `${this.currentPath}/${item.name}`))
+
+    const index = imagePaths.indexOf(imagePath)
+    if (index === -1 || imagePaths.length <= 1) return undefined
+
+    return { paths: imagePaths, index }
+  }
+
+  private handleViewerNavigate(path: string): void {
+    const nav = this.getImageNavContext(path)
+    if (!nav) return
+    this.viewer.open(path, nav)
+    this.updateHistory(path, true, true)
   }
 
   private setupEventListeners(): void {
@@ -343,12 +565,13 @@ class FileBrowser {
     this.fileList.addEventListener('click', (e) => {
       const target = e.target as HTMLElement
 
-      // Handle download button
-      const downloadBtn = target.closest('.download')
-      if (downloadBtn) {
+      // Handle info button
+      const infoBtn = target.closest('.info')
+      if (infoBtn) {
         e.stopPropagation()
-        const path = downloadBtn.getAttribute('data-path')
-        if (path) this.downloadFile(path)
+        const path = infoBtn.getAttribute('data-path')
+        const absolutePath = infoBtn.getAttribute('data-absolute-path')
+        if (path) this.infoModal.open(path, absolutePath || undefined)
         return
       }
 
@@ -437,11 +660,14 @@ class FileBrowser {
       }
 
       const data: ListResponse = await response.json()
+      this.currentItems = data.items
       this.renderItems(data.items)
       if (options.openViewerPath) {
-        this.viewer.open(options.openViewerPath)
+        const nav = this.getImageNavContext(options.openViewerPath)
+        this.viewer.open(options.openViewerPath, nav)
       }
     } catch (error) {
+      this.currentItems = []
       this.showError(error instanceof Error ? error.message : 'Failed to load')
       this.renderEmpty()
     }
@@ -457,7 +683,27 @@ class FileBrowser {
   private renderItems(items: FileItem[]): void {
     this.loading.style.display = 'none'
 
-    if (items.length === 0) {
+    // Remove existing items
+    const existingItems = this.fileList.querySelectorAll('.file-item, .empty')
+    existingItems.forEach((item) => item.remove())
+
+    // Render virtual ".." row for non-root directories
+    if (this.currentPath !== '/') {
+      const parentPath = this.getParentPath(this.currentPath)
+      this.fileList.insertAdjacentHTML(
+        'beforeend',
+        `
+        <div class="file-item" data-path="${this.escapeHtml(parentPath)}" data-type="directory" data-extension="">
+          <span class="file-icon">${Folder}</span>
+          <div class="file-info">
+            <div class="file-name">..</div>
+          </div>
+        </div>
+      `
+      )
+    }
+
+    if (items.length === 0 && this.currentPath === '/') {
       this.renderEmpty()
       return
     }
@@ -474,19 +720,9 @@ class FileBrowser {
             <div class="file-meta">${this.formatMeta(item)}</div>
           </div>
           <div class="file-actions">
-            ${
-              item.type === 'file'
-                ? `
-              <button class="btn-file-action download" data-path="${this.escapeHtml(itemPath)}" aria-label="Download">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
-                  <polyline points="7 10 12 15 17 10"/>
-                  <line x1="12" y1="15" x2="12" y2="3"/>
-                </svg>
-              </button>
-            `
-                : ''
-            }
+            <button class="btn-file-action info" data-path="${this.escapeHtml(itemPath)}" data-absolute-path="${this.escapeHtml(item.absolutePath)}" aria-label="Info">
+              ${Info}
+            </button>
             <button class="btn-file-action copy" data-absolute-path="${this.escapeHtml(item.absolutePath)}" aria-label="Copy path">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
@@ -499,9 +735,6 @@ class FileBrowser {
       })
       .join('')
 
-    // Remove existing items and add new ones
-    const existingItems = this.fileList.querySelectorAll('.file-item, .empty')
-    existingItems.forEach((item) => item.remove())
     this.fileList.insertAdjacentHTML('beforeend', html)
   }
 
@@ -589,7 +822,8 @@ class FileBrowser {
     path: string,
     options: { updateHistory?: boolean; replaceHistory?: boolean } = {}
   ): void {
-    this.viewer.open(path)
+    const nav = this.getImageNavContext(path)
+    this.viewer.open(path, nav)
     if (options.updateHistory === false) return
     this.updateHistory(path, true, options.replaceHistory)
   }
@@ -789,19 +1023,9 @@ class FileBrowser {
 
   private formatDate(iso: string): string {
     const date = new Date(iso)
-    const now = new Date()
-    const diffMs = now.getTime() - date.getTime()
-    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24))
-
-    if (diffDays === 0) {
-      return date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
-    } else if (diffDays === 1) {
-      return 'Yesterday'
-    } else if (diffDays < 7) {
-      return `${diffDays} days ago`
-    } else {
-      return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
-    }
+    const datePart = date.toLocaleDateString(undefined, { day: 'numeric', month: 'short' })
+    const timePart = date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+    return `${datePart} ${timePart}`
   }
 
   private escapeHtml(text: string): string {
