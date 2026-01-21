@@ -465,6 +465,122 @@ export function advertiseService(port: number, name: string) {
 
 ---
 
+## Distribution: Ad Hoc OTA
+
+For private testing without App Store, we'll use **Ad Hoc OTA (Over-The-Air)** distribution.
+
+### How It Works
+
+1. **Device Registration**: Add tester device UDIDs to Apple Developer provisioning profile (max 100 devices)
+2. **Build IPA**: Archive app with Ad Hoc provisioning profile
+3. **Host Files**: Upload IPA + manifest.plist to a web server (HTTPS required)
+4. **Install Link**: Users tap a link that triggers iOS to download and install
+
+### Required Files
+
+```
+https://your-server.com/
+├── BrowseyApp.ipa           # The compiled app
+├── manifest.plist           # Installation manifest
+└── install.html             # Landing page with install button
+```
+
+### manifest.plist Template
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>items</key>
+    <array>
+        <dict>
+            <key>assets</key>
+            <array>
+                <dict>
+                    <key>kind</key>
+                    <string>software-package</string>
+                    <key>url</key>
+                    <string>https://your-server.com/BrowseyApp.ipa</string>
+                </dict>
+                <dict>
+                    <key>kind</key>
+                    <string>display-image</string>
+                    <key>url</key>
+                    <string>https://your-server.com/icon-57.png</string>
+                </dict>
+                <dict>
+                    <key>kind</key>
+                    <string>full-size-image</string>
+                    <key>url</key>
+                    <string>https://your-server.com/icon-512.png</string>
+                </dict>
+            </array>
+            <key>metadata</key>
+            <dict>
+                <key>bundle-identifier</key>
+                <string>com.yourcompany.browsey</string>
+                <key>bundle-version</key>
+                <string>1.0.0</string>
+                <key>kind</key>
+                <string>software</string>
+                <key>title</key>
+                <string>Browsey</string>
+            </dict>
+        </dict>
+    </array>
+</dict>
+</plist>
+```
+
+### Install Link Format
+
+```html
+<a href="itms-services://?action=download-manifest&url=https://your-server.com/manifest.plist">
+    Install Browsey
+</a>
+```
+
+### Setup Steps
+
+1. **Get Device UDIDs**
+   - Testers: Settings → General → About → tap "UDID" to copy
+   - Or use Apple Configurator / Xcode
+
+2. **Create Ad Hoc Provisioning Profile**
+   - Apple Developer Portal → Certificates, IDs & Profiles
+   - Create new provisioning profile → Ad Hoc
+   - Select app ID and registered devices
+   - Download and install in Xcode
+
+3. **Archive & Export**
+   - Xcode: Product → Archive
+   - Distribute App → Ad Hoc
+   - Select provisioning profile
+   - Export IPA
+
+4. **Host on HTTPS Server**
+   - GitHub Pages, Netlify, or any HTTPS host
+   - Upload IPA, manifest.plist, icons
+   - Share install link with testers
+
+### Limitations
+
+- Maximum 100 devices per developer account per year
+- Requires manual UDID collection
+- Provisioning profile expires annually
+- HTTPS required (self-signed certs won't work)
+
+### Alternatives Considered
+
+| Method | Pros | Cons |
+|--------|------|------|
+| **Ad Hoc OTA** | Simple, no review | 100 device limit, UDID needed |
+| TestFlight | 10,000 testers, no UDID | Requires App Store Connect, review |
+| Enterprise | Unlimited devices | $299/year, strict rules |
+
+---
+
 ## Future Considerations (Post v1)
 
 - **Authentication**: Token-based auth for security
