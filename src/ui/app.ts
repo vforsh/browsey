@@ -165,8 +165,14 @@ class FileViewer {
   private closeBtn: HTMLElement
   private prevBtn: HTMLButtonElement
   private nextBtn: HTMLButtonElement
+  private fontDecreaseBtn: HTMLButtonElement
+  private fontIncreaseBtn: HTMLButtonElement
   private currentPath: string | null = null
   private imageNav: ImageNavContext | null = null
+  private currentContentType: 'text' | 'image' | null = null
+  private currentFontLevel: number = 3 // Default: 16px
+  private readonly FONT_SIZES = [12, 14, 16, 18, 20, 22, 24]
+  private readonly STORAGE_KEY = 'browsey-font-size'
   private onClose?: () => void
   private onNavigate?: (path: string) => void
 
@@ -178,9 +184,12 @@ class FileViewer {
     this.closeBtn = document.getElementById('viewer-close')!
     this.prevBtn = document.getElementById('viewer-prev') as HTMLButtonElement
     this.nextBtn = document.getElementById('viewer-next') as HTMLButtonElement
+    this.fontDecreaseBtn = document.getElementById('viewer-font-decrease') as HTMLButtonElement
+    this.fontIncreaseBtn = document.getElementById('viewer-font-increase') as HTMLButtonElement
     this.onClose = onClose
     this.onNavigate = onNavigate
 
+    this.loadFontPreference()
     this.setupEventListeners()
     this.setupMarked()
   }
@@ -190,20 +199,34 @@ class FileViewer {
     this.downloadBtn.addEventListener('click', () => this.download())
     this.prevBtn.addEventListener('click', () => this.navigatePrev())
     this.nextBtn.addEventListener('click', () => this.navigateNext())
+    this.fontDecreaseBtn.addEventListener('click', () => this.decreaseFontSize())
+    this.fontIncreaseBtn.addEventListener('click', () => this.increaseFontSize())
     this.overlay.addEventListener('click', (event) => {
       if (event.target !== this.overlay) return
       this.close()
     })
 
-    // Close on ESC, navigate on arrows
+    // Close on ESC, navigate on arrows, font size with +/-
     document.addEventListener('keydown', (e) => {
       if (this.overlay.hidden) return
       if (e.key === 'Escape') {
         this.close()
       } else if (e.key === 'ArrowLeft') {
-        this.navigatePrev()
+        if (this.currentContentType === 'image') {
+          this.navigatePrev()
+        }
       } else if (e.key === 'ArrowRight') {
-        this.navigateNext()
+        if (this.currentContentType === 'image') {
+          this.navigateNext()
+        }
+      } else if (e.key === '-' || e.key === '_') {
+        if (this.currentContentType === 'text') {
+          this.decreaseFontSize()
+        }
+      } else if (e.key === '=' || e.key === '+') {
+        if (this.currentContentType === 'text') {
+          this.increaseFontSize()
+        }
       }
     })
 
@@ -252,17 +275,79 @@ class FileViewer {
     this.onNavigate?.(newPath)
   }
 
-  private updateNavButtons(): void {
-    if (!this.imageNav) {
-      this.prevBtn.hidden = true
-      this.nextBtn.hidden = true
-      return
+  private hideAllControlButtons(): void {
+    this.prevBtn.hidden = true
+    this.nextBtn.hidden = true
+    this.fontDecreaseBtn.hidden = true
+    this.fontIncreaseBtn.hidden = true
+  }
+
+  private updateControlButtons(): void {
+    const isImage = this.currentContentType === 'image'
+    const isText = this.currentContentType === 'text'
+
+    // Image navigation: show only for images with nav context
+    const hasImageNav = this.imageNav !== null
+    this.prevBtn.hidden = !(isImage && hasImageNav)
+    this.nextBtn.hidden = !(isImage && hasImageNav)
+    if (isImage && hasImageNav) {
+      this.prevBtn.disabled = this.imageNav!.index <= 0
+      this.nextBtn.disabled = this.imageNav!.index >= this.imageNav!.paths.length - 1
     }
 
-    this.prevBtn.hidden = false
-    this.nextBtn.hidden = false
-    this.prevBtn.disabled = this.imageNav.index <= 0
-    this.nextBtn.disabled = this.imageNav.index >= this.imageNav.paths.length - 1
+    // Font controls: show only for text content
+    this.fontDecreaseBtn.hidden = !isText
+    this.fontIncreaseBtn.hidden = !isText
+    if (isText) {
+      this.updateFontButtons()
+    }
+  }
+
+  private loadFontPreference(): void {
+    const saved = localStorage.getItem(this.STORAGE_KEY)
+    if (saved) {
+      const level = parseInt(saved, 10)
+      if (level >= 1 && level <= this.FONT_SIZES.length) {
+        this.currentFontLevel = level
+      }
+    }
+  }
+
+  private saveFontPreference(): void {
+    localStorage.setItem(this.STORAGE_KEY, String(this.currentFontLevel))
+  }
+
+  private getCurrentFontSize(): number {
+    return this.FONT_SIZES[this.currentFontLevel - 1] ?? 16
+  }
+
+  private decreaseFontSize(): void {
+    if (this.currentFontLevel <= 1) return
+    this.currentFontLevel--
+    this.applyFontSize()
+    this.saveFontPreference()
+    this.updateFontButtons()
+  }
+
+  private increaseFontSize(): void {
+    if (this.currentFontLevel >= this.FONT_SIZES.length) return
+    this.currentFontLevel++
+    this.applyFontSize()
+    this.saveFontPreference()
+    this.updateFontButtons()
+  }
+
+  private applyFontSize(): void {
+    const size = this.getCurrentFontSize()
+    const textContent = this.content.querySelector('.viewer-text, .viewer-markdown') as HTMLElement | null
+    if (textContent) {
+      textContent.style.fontSize = `${size}px`
+    }
+  }
+
+  private updateFontButtons(): void {
+    this.fontDecreaseBtn.disabled = this.currentFontLevel <= 1
+    this.fontIncreaseBtn.disabled = this.currentFontLevel >= this.FONT_SIZES.length
   }
 
   private setupMarked(): void {
@@ -283,10 +368,11 @@ class FileViewer {
   async open(path: string, imageNav?: ImageNavContext): Promise<void> {
     this.currentPath = path
     this.imageNav = imageNav ?? null
+    this.currentContentType = null
     this.overlay.hidden = false
     this.content.innerHTML = '<div class="viewer-loading">Loading...</div>'
     this.filename.textContent = path.split('/').pop() || ''
-    this.updateNavButtons()
+    this.hideAllControlButtons()
 
     try {
       const response = await fetch(`/api/view?path=${encodeURIComponent(path)}`)
@@ -311,12 +397,14 @@ class FileViewer {
   }
 
   private renderText(content: string, extension: string | null, filename: string): void {
+    this.currentContentType = 'text'
+    const size = this.getCurrentFontSize()
     const isMarkdown = extension?.toLowerCase() === 'md' || extension?.toLowerCase() === 'markdown'
 
     if (isMarkdown) {
       // Render markdown
       const html = marked.parse(content) as string
-      this.content.innerHTML = `<div class="viewer-markdown">${html}</div>`
+      this.content.innerHTML = `<div class="viewer-markdown" style="font-size: ${size}px">${html}</div>`
     } else {
       // Render with syntax highlighting
       const language = getLanguage(extension)
@@ -328,11 +416,14 @@ class FileViewer {
         highlighted = hljs.highlightAuto(content).value
       }
 
-      this.content.innerHTML = `<div class="viewer-text"><code class="hljs">${highlighted}</code></div>`
+      this.content.innerHTML = `<div class="viewer-text" style="font-size: ${size}px"><code class="hljs">${highlighted}</code></div>`
     }
+
+    this.updateControlButtons()
   }
 
   private renderImage(url: string, filename: string): void {
+    this.currentContentType = 'image'
     this.content.innerHTML = `
       <div class="viewer-image">
         <img src="${url}" alt="${this.escapeHtml(filename)}" />
@@ -346,6 +437,8 @@ class FileViewer {
       if (!width || !height) return
       this.filename.textContent = `${filename} • ${width}x${height}`
     }, { once: true })
+
+    this.updateControlButtons()
   }
 
   private renderError(message: string): void {
@@ -369,8 +462,9 @@ class FileViewer {
     this.overlay.hidden = true
     this.currentPath = null
     this.imageNav = null
+    this.currentContentType = null
     this.content.innerHTML = ''
-    this.updateNavButtons()
+    this.updateControlButtons()
     if (!shouldNotify) return
     this.onClose?.()
   }

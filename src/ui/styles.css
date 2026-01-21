@@ -374,12 +374,14 @@ body {
   white-space: pre-wrap;
   word-wrap: break-word;
   tab-size: 2;
+  transition: font-size 0.15s ease;
 }
 
 .viewer-text code {
   display: block;
   background: transparent;
   padding: 0;
+  font-size: inherit;
 }
 
 /* Syntax highlighting theme (dark) */
@@ -450,6 +452,7 @@ body {
   max-width: 800px;
   margin: 0 auto;
   line-height: 1.6;
+  transition: font-size 0.15s ease;
 }
 
 .viewer-markdown h1,
