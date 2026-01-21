@@ -22,15 +22,29 @@ async function getUIContent(): Promise<{ html: string; css: string; js: string }
   const __dirname = dirname(fileURLToPath(import.meta.url))
   const uiDir = join(__dirname, 'ui')
 
-  const [html, css, tsCode] = await Promise.all([
+  const [html, css] = await Promise.all([
     Bun.file(join(uiDir, 'index.html')).text(),
     Bun.file(join(uiDir, 'styles.css')).text(),
-    Bun.file(join(uiDir, 'app.ts')).text(),
   ])
 
-  // Transpile TypeScript to JavaScript
-  const transpiler = new Bun.Transpiler({ loader: 'ts' })
-  const js = transpiler.transformSync(tsCode)
+  const clientResult = await Bun.build({
+    entrypoints: [join(uiDir, 'app.ts')],
+    minify: false,
+    format: 'iife',
+    target: 'browser',
+    write: false,
+  } as Bun.BuildConfig & { write?: boolean })
+
+  if (!clientResult.success) {
+    throw new Error('Failed to build client UI in dev mode')
+  }
+
+  const clientOutput = clientResult.outputs[0]
+  if (!clientOutput) {
+    throw new Error('Missing client UI output in dev mode')
+  }
+
+  const js = await clientOutput.text()
 
   return { html, css, js }
 }
@@ -75,7 +89,7 @@ export async function startServer(options: ServerOptions): Promise<void> {
         return apiResponse
       }
 
-      return new Response('Not found', { status: 404 })
+      return new Response(ui.html, { headers: { 'Content-Type': 'text/html' } })
     },
   })
 

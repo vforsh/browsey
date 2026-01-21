@@ -57,6 +57,24 @@ body {
   padding: 0 8px;
 }
 
+.breadcrumb {
+  background: none;
+  border: none;
+  color: var(--text-primary);
+  font: inherit;
+  padding: 0;
+  cursor: pointer;
+}
+
+.breadcrumb:hover {
+  color: var(--accent);
+}
+
+.breadcrumb-sep {
+  color: var(--text-secondary);
+  margin: 0 4px;
+}
+
 .btn-icon {
   display: flex;
   align-items: center;
@@ -107,8 +125,15 @@ body {
 }
 
 .empty-icon {
-  font-size: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   opacity: 0.5;
+}
+
+.empty-icon svg {
+  width: 36px;
+  height: 36px;
 }
 
 .file-item {
@@ -137,8 +162,20 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 24px;
   flex-shrink: 0;
+}
+
+.file-icon svg {
+  width: 18px;
+  height: 18px;
+}
+
+.file-item[data-type="directory"] .file-icon {
+  color: var(--folder-color);
+}
+
+.file-item[data-type="file"] .file-icon {
+  color: var(--file-color);
 }
 
 .file-info {
@@ -264,4 +301,304 @@ body {
   .file-list::-webkit-scrollbar-thumb:hover {
     background: rgba(255, 255, 255, 0.3);
   }
+}
+
+/* File Viewer Modal */
+.viewer-overlay {
+  position: fixed;
+  inset: 0;
+  background: var(--bg-primary);
+  z-index: 2000;
+  display: flex;
+  flex-direction: column;
+  animation: viewerFadeIn 0.2s ease;
+}
+
+.viewer-overlay[hidden] {
+  display: none;
+}
+
+@keyframes viewerFadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.viewer-header {
+  display: flex;
+  align-items: center;
+  padding: 8px 12px;
+  padding-top: calc(8px + var(--safe-top));
+  background: var(--bg-secondary);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.viewer-filename {
+  flex: 1;
+  font-size: 14px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0 8px;
+}
+
+.viewer-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.viewer-content {
+  flex: 1;
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Text viewer */
+.viewer-text {
+  padding: 16px;
+  font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Fira Code', 'Fira Mono', 'Droid Sans Mono', 'Source Code Pro', monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  tab-size: 2;
+}
+
+.viewer-text code {
+  display: block;
+  background: transparent;
+  padding: 0;
+}
+
+/* Syntax highlighting theme (dark) */
+.hljs {
+  background: transparent !important;
+  padding: 0 !important;
+}
+
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-literal,
+.hljs-section,
+.hljs-link {
+  color: #c678dd;
+}
+
+.hljs-string,
+.hljs-title,
+.hljs-name,
+.hljs-type,
+.hljs-attribute,
+.hljs-symbol,
+.hljs-bullet,
+.hljs-addition,
+.hljs-variable,
+.hljs-template-tag,
+.hljs-template-variable {
+  color: #98c379;
+}
+
+.hljs-comment,
+.hljs-quote,
+.hljs-deletion,
+.hljs-meta {
+  color: #5c6370;
+}
+
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-literal,
+.hljs-title,
+.hljs-section,
+.hljs-doctag,
+.hljs-type,
+.hljs-name,
+.hljs-strong {
+  font-weight: 500;
+}
+
+.hljs-number,
+.hljs-regexp,
+.hljs-built_in,
+.hljs-builtin-name {
+  color: #d19a66;
+}
+
+.hljs-attr {
+  color: #e06c75;
+}
+
+.hljs-emphasis {
+  font-style: italic;
+}
+
+/* Markdown rendered content */
+.viewer-markdown {
+  padding: 16px 24px;
+  max-width: 800px;
+  margin: 0 auto;
+  line-height: 1.6;
+}
+
+.viewer-markdown h1,
+.viewer-markdown h2,
+.viewer-markdown h3,
+.viewer-markdown h4,
+.viewer-markdown h5,
+.viewer-markdown h6 {
+  margin-top: 1.5em;
+  margin-bottom: 0.5em;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.viewer-markdown h1 {
+  font-size: 2em;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  padding-bottom: 0.3em;
+}
+
+.viewer-markdown h2 {
+  font-size: 1.5em;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  padding-bottom: 0.3em;
+}
+
+.viewer-markdown h3 {
+  font-size: 1.25em;
+}
+
+.viewer-markdown p {
+  margin: 1em 0;
+}
+
+.viewer-markdown a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.viewer-markdown a:hover {
+  text-decoration: underline;
+}
+
+.viewer-markdown code {
+  background: var(--bg-secondary);
+  padding: 0.2em 0.4em;
+  border-radius: 4px;
+  font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Fira Code', monospace;
+  font-size: 0.9em;
+}
+
+.viewer-markdown pre {
+  background: var(--bg-secondary);
+  padding: 16px;
+  border-radius: 8px;
+  overflow-x: auto;
+  margin: 1em 0;
+}
+
+.viewer-markdown pre code {
+  background: transparent;
+  padding: 0;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.viewer-markdown ul,
+.viewer-markdown ol {
+  margin: 1em 0;
+  padding-left: 2em;
+}
+
+.viewer-markdown li {
+  margin: 0.25em 0;
+}
+
+.viewer-markdown blockquote {
+  border-left: 4px solid var(--accent);
+  padding-left: 1em;
+  margin: 1em 0;
+  color: var(--text-secondary);
+}
+
+.viewer-markdown img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 8px;
+}
+
+.viewer-markdown table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 1em 0;
+}
+
+.viewer-markdown th,
+.viewer-markdown td {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  padding: 8px 12px;
+  text-align: left;
+}
+
+.viewer-markdown th {
+  background: var(--bg-secondary);
+  font-weight: 600;
+}
+
+.viewer-markdown hr {
+  border: none;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  margin: 2em 0;
+}
+
+/* Image viewer */
+.viewer-image {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100%;
+  padding: 16px;
+}
+
+.viewer-image img {
+  max-width: 100%;
+  max-height: calc(100vh - 80px);
+  object-fit: contain;
+  border-radius: 4px;
+  touch-action: pinch-zoom;
+}
+
+/* Loading state in viewer */
+.viewer-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--text-secondary);
+}
+
+/* Error state in viewer */
+.viewer-error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--text-secondary);
+  gap: 8px;
+}
+
+.viewer-error-icon {
+  opacity: 0.5;
+}
+
+.viewer-error-icon svg {
+  width: 36px;
+  height: 36px;
 }

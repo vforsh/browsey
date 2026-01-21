@@ -14,7 +14,7 @@ const clientResult = await Bun.build({
   format: 'iife',
   target: 'browser',
   write: false,
-})
+} as Bun.BuildConfig & { write?: boolean })
 
 if (!clientResult.success) {
   console.error('Failed to build client UI')
@@ -29,7 +29,7 @@ if (!clientOutput) {
 
 const html = await Bun.file(resolve(rootDir, 'src/ui/index.html')).text()
 const css = await Bun.file(resolve(rootDir, 'src/ui/styles.css')).text()
-const js = new TextDecoder().decode(clientOutput.contents)
+const js = await clientOutput.text()
 
 const serverOutfile = resolve(distDir, 'browsey')
 const serverResult = await Bun.build({
@@ -45,7 +45,7 @@ const serverResult = await Bun.build({
     UI_CSS: JSON.stringify(css),
     UI_JS: JSON.stringify(js),
   },
-})
+} as Bun.BuildConfig & { write?: boolean })
 
 if (!serverResult.success) {
   console.error('Failed to build server bundle')
@@ -58,7 +58,7 @@ if (!serverOutput) {
   process.exit(1)
 }
 
-const built = new TextDecoder().decode(serverOutput.contents)
+const built = await serverOutput.text()
 const withShebang = built.startsWith('#!') ? built : `#!/usr/bin/env bun\n${built}`
 await Bun.write(serverOutfile, withShebang)
 chmodSync(serverOutfile, 0o755)

@@ -1,4 +1,5 @@
 import { Command } from 'commander'
+import getPort from 'get-port'
 import { resolve } from 'path'
 import { startServer } from './server.js'
 import { parseIgnorePatterns } from './ignore.js'
@@ -33,16 +34,22 @@ Examples:
 `
   )
   .action(async (pathArg: string, options: Record<string, unknown>) => {
-    const port = parseInt(options.port as string, 10)
-    if (isNaN(port) || port < 1 || port > 65535) {
+    const requestedPort = parseInt(options.port as string, 10)
+    if (isNaN(requestedPort) || requestedPort < 1 || requestedPort > 65535) {
       console.error('Error: Invalid port number')
       process.exit(1)
+    }
+
+    const host = options.host as string
+    const port = await getPort({ port: requestedPort, host })
+    if (port !== requestedPort) {
+      console.log(`Port ${requestedPort} is busy. Using ${port} instead.`)
     }
 
     await startServer({
       root: resolve(pathArg),
       port,
-      host: options.host as string,
+      host,
       open: options.open as boolean,
       readonly: (options.readonly as boolean) ?? false,
       showHidden: (options.hidden as boolean) ?? false,
