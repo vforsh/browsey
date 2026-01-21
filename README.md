@@ -4,6 +4,12 @@ A mobile-friendly web file browser CLI tool built with Bun.
 
 Start a local web server to browse files from any device on your network - perfect for quickly accessing files on your computer from your phone or tablet.
 
+<div>
+  <img src="./docs/screenshots/browsey_1.png" alt="Browsey UI screen 1" width="32%" />
+  <img src="./docs/screenshots/browsey_2.png" alt="Browsey UI screen 2" width="32%" />
+  <img src="./docs/screenshots/browsey_markdown.png" alt="Browsey UI screen 3" width="32%" />
+</div>
+
 ## Features
 
 - **Mobile-first UI** - Touch-friendly interface with large tap targets
