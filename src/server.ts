@@ -5,6 +5,7 @@ import { fileURLToPath } from 'url'
 import qrcode from 'qrcode-terminal'
 import { handleApiRequest } from './routes.js'
 import { advertiseService } from './bonjour.js'
+import { register, deregister } from './registry.js'
 import type { ServerOptions } from './types.js'
 
 // UI bundle will be injected by build script
@@ -133,12 +134,25 @@ export async function startServer(options: ServerOptions): Promise<void> {
   console.log('  \x1b[2mPress Ctrl+C to stop\x1b[0m')
   console.log()
 
+  // Register this instance
+  register({
+    pid: process.pid,
+    port: options.port,
+    host: options.host,
+    rootPath,
+    startedAt: new Date().toISOString(),
+    readonly: options.readonly,
+    bonjour: options.bonjour,
+    version: options.version,
+  })
+
   if (options.open) {
     openBrowser(networkUrl ?? localUrl)
   }
 
   const shutdown = () => {
     console.log('\n  Shutting down...')
+    deregister(process.pid)
     if (stopBonjour) {
       stopBonjour()
     }

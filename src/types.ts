@@ -8,6 +8,7 @@ export type ServerOptions = {
   showQR: boolean
   bonjour: boolean
   ignorePatterns: string[]
+  version: string
 }
 
 export type FileItem = {
@@ -29,4 +30,20 @@ export type ApiRoutesOptions = {
   readonly: boolean
   showHidden: boolean
   ignorePatterns: string[]
+}
+
+export interface InstanceInfo {
+  pid: number           // Process ID (primary identifier)
+  port: number          // Listening port
+  host: string          // Bound host (0.0.0.0, localhost, etc.)
+  rootPath: string      // Absolute path being served
+  startedAt: string     // ISO 8601 timestamp
+  readonly: boolean     // Read-only mode flag
+  bonjour: boolean      // Bonjour advertising enabled
+  version: string       // Browsey version
+}
+
+export interface RegistryFile {
+  version: 1            // Schema version for migrations
+  instances: InstanceInfo[]
 }
