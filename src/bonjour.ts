@@ -1,4 +1,4 @@
-import Bonjour, { type Service } from 'bonjour-service'
+import { Bonjour, type Service } from 'bonjour-service'
 import { hostname } from 'os'
 
 let bonjourInstance: Bonjour | null = null

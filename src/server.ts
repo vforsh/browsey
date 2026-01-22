@@ -125,7 +125,7 @@ export async function startServer(options: ServerOptions): Promise<void> {
       stopBonjour = advertiseService(options.port, rootPath)
       console.log('  \x1b[2mBonjour:\x1b[0m  Advertising as _browsey._tcp')
       console.log()
-    } catch (error) {
+    } catch {
       console.log('  \x1b[33mWarning:\x1b[0m  Could not start Bonjour advertising')
       console.log()
     }
