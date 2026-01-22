@@ -4,6 +4,7 @@ import { existsSync } from 'fs'
 import { fileURLToPath } from 'url'
 import qrcode from 'qrcode-terminal'
 import { handleApiRequest } from './routes.js'
+import { advertiseService } from './bonjour.js'
 import type { ServerOptions } from './types.js'
 
 // UI bundle will be injected by build script
@@ -51,6 +52,7 @@ async function getUIContent(): Promise<{ html: string; css: string; js: string }
 
 export async function startServer(options: ServerOptions): Promise<void> {
   const rootPath = resolve(options.root)
+  const listenHost = normalizeHost(options.host)
 
   // Validate root path exists
   if (!existsSync(rootPath)) {
@@ -70,7 +72,7 @@ export async function startServer(options: ServerOptions): Promise<void> {
 
   const server = Bun.serve({
     port: options.port,
-    hostname: options.host,
+    hostname: listenHost,
     fetch: async (req) => {
       const url = new URL(req.url)
 
@@ -93,8 +95,8 @@ export async function startServer(options: ServerOptions): Promise<void> {
     },
   })
 
-  const localUrl = `http://localhost:${options.port}`
-  const networkUrl = getNetworkUrl(options.host, options.port)
+  const localUrl = getLocalUrl(listenHost, options.port)
+  const networkUrl = getNetworkUrl(listenHost, options.port)
 
   console.log()
   console.log('  \x1b[1mBrowsey\x1b[0m is running!')
@@ -115,6 +117,19 @@ export async function startServer(options: ServerOptions): Promise<void> {
     console.log()
   }
 
+  // Start Bonjour advertising for iOS app discovery
+  let stopBonjour: (() => void) | null = null
+  if (options.bonjour) {
+    try {
+      stopBonjour = advertiseService(options.port, rootPath)
+      console.log('  \x1b[2mBonjour:\x1b[0m  Advertising as _browsey._tcp')
+      console.log()
+    } catch (error) {
+      console.log('  \x1b[33mWarning:\x1b[0m  Could not start Bonjour advertising')
+      console.log()
+    }
+  }
+
   console.log('  \x1b[2mPress Ctrl+C to stop\x1b[0m')
   console.log()
 
@@ -124,12 +139,33 @@ export async function startServer(options: ServerOptions): Promise<void> {
 
   const shutdown = () => {
     console.log('\n  Shutting down...')
+    if (stopBonjour) {
+      stopBonjour()
+    }
     server.stop()
     process.exit(0)
   }
 
   process.on('SIGINT', shutdown)
   process.on('SIGTERM', shutdown)
+}
+
+function normalizeHost(host: string): string {
+  if (host === '0.0.0.0') {
+    // Use dual-stack so localhost IPv6 still reaches the server.
+    return '::'
+  }
+  return host
+}
+
+function getLocalUrl(host: string, port: number): string {
+  if (host === '0.0.0.0' || host === '::') {
+    return `http://127.0.0.1:${port}`
+  }
+  if (host === '::1') {
+    return `http://[::1]:${port}`
+  }
+  return `http://${host}:${port}`
 }
 
 function getNetworkUrl(host: string, port: number): string | null {

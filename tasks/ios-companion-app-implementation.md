@@ -4,6 +4,59 @@
 
 A fully native iOS app built with SwiftUI that connects to Browsey servers on the local network. The app provides a native file browsing experience with server discovery via manual entry, QR code scanning, and Bonjour auto-discovery.
 
+## Repository & Automation Setup (Required)
+
+This iOS app must live in a **separate git repository** at a sibling directory to this repo:
+
+- **iOS repo path**: `../browsey-ios` (relative to this `browsey` repo)
+- **GitHub repo**: `vforsh/browsey-ios` (public)
+- **License**: MIT
+- **Bundle ID**: `com.vforsh.browsey`
+
+### Create the repo locally + on GitHub (via `gh`)
+
+From the root of this repo (`browsey/`), create the sibling directory and initialize the new project repo:
+
+```bash
+mkdir -p ../browsey-ios
+cd ../browsey-ios
+git init
+```
+
+Create the public GitHub repo and connect `origin`:
+
+```bash
+gh repo create vforsh/browsey-ios --public --source=. --remote=origin
+```
+
+### Configure XcodeBuildMCP for Claude Code CLI
+
+We will use XcodeBuildMCP (`https://www.xcodebuildmcp.com/`) so Claude Code can build/run the app and capture screenshots via simulator UI automation.
+
+Preferred configuration is **project-scoped** so it works from `../browsey-ios`:
+
+- Create `../browsey-ios/.mcp.json` containing:
+
+```json
+{
+  "mcpServers": {
+    "XcodeBuildMCP": {
+      "command": "npx",
+      "args": ["-y", "xcodebuildmcp@latest"]
+    }
+  }
+}
+```
+
+Alternative configuration is **user-scoped** at `~/.claude.json` (useful if you don’t want project config committed).
+
+### Add cross-repo context to the iOS README
+
+In `../browsey-ios/README.md`, add a short section documenting:
+
+- **Local dev layout**: this repo at `../browsey-ios` alongside the main repo at `../browsey`
+- **API expectation**: the iOS app talks to the main Browsey server and expects the endpoints documented in **API Endpoints Used** (below)
+
 ## Technical Specifications
 
 | Spec | Value |
@@ -61,11 +114,24 @@ BrowseyApp/
 
 ## Implementation Phases
 
+### Phase 0: Repo + XcodeBuildMCP Setup
+
+**Tasks:**
+1. Create the new iOS repo at `../browsey-ios` and publish `vforsh/browsey-ios` (public) using `gh`
+2. Add MIT license and initial `README.md`
+3. Add Claude Code CLI MCP config for XcodeBuildMCP (prefer `../browsey-ios/.mcp.json`)
+4. Confirm Claude Code can see the MCP server from within `../browsey-ios`
+5. Define a repeatable “build → run → capture screenshots” workflow for the iOS Simulator (via XcodeBuildMCP UI automation)
+
+**Deliverable:** A separate, published iOS repo ready for automated build/run + screenshot iteration
+
+---
+
 ### Phase 1: Project Setup & Core Infrastructure
 
 **Tasks:**
 1. Create new Xcode project with SwiftUI lifecycle
-2. Configure project settings (bundle ID, deployment target iOS 17)
+2. Configure project settings (bundle ID `com.vforsh.browsey`, deployment target iOS 17)
 3. Set up folder structure as outlined above
 4. Add required capabilities:
    - Camera (for QR scanning)
@@ -381,6 +447,10 @@ struct FileViewerView: View {
    - VoiceOver labels
    - Dynamic Type support
    - Reduce Motion support
+
+6. **Automation: UI screenshots (Simulator)**
+   - Add a lightweight UI-automation path to navigate key screens
+   - Capture screenshots for docs/regression checks (server list, directory view, file viewer states)
 
 **Deliverable:** Polished, production-ready user experience
 

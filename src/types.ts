@@ -6,6 +6,7 @@ export type ServerOptions = {
   readonly: boolean
   showHidden: boolean
   showQR: boolean
+  bonjour: boolean
   ignorePatterns: string[]
 }
 

@@ -22,6 +22,7 @@ program
   .option('--no-readonly', 'Allow file modifications')
   .option('--hidden', 'Show hidden files')
   .option('--no-qr', 'Do not display QR code')
+  .option('--no-bonjour', 'Disable Bonjour service advertising')
   .addHelpText(
     'after',
     `
@@ -54,6 +55,7 @@ Examples:
       readonly: (options.readonly as boolean) ?? true,
       showHidden: (options.hidden as boolean) ?? false,
       showQR: (options.qr as boolean) ?? true,
+      bonjour: (options.bonjour as boolean) ?? true,
       ignorePatterns: parseIgnorePatterns(options.ignore as string | undefined),
     })
   })
