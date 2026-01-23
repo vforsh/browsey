@@ -12,6 +12,12 @@ import type { ServerOptions } from './types.js'
 declare const UI_HTML: string
 declare const UI_CSS: string
 declare const UI_JS: string
+declare const UI_MANIFEST: string
+declare const UI_ICON_192_B64: string
+declare const UI_ICON_512_B64: string
+declare const UI_MASKABLE_192_B64: string
+declare const UI_MASKABLE_512_B64: string
+declare const UI_APPLE_TOUCH_ICON_B64: string
 
 // Dev mode: load UI files from disk if constants aren't defined
 async function getUIContent(): Promise<{ html: string; css: string; js: string }> {
@@ -51,6 +57,55 @@ async function getUIContent(): Promise<{ html: string; css: string; js: string }
   return { html, css, js }
 }
 
+type PwaAssets = {
+  manifest: string
+  icons: Record<string, ArrayBuffer>
+}
+
+function decodeBase64ToBuffer(base64: string): ArrayBuffer {
+  const buffer = Buffer.from(base64, 'base64')
+  return buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength)
+}
+
+async function getPwaAssets(): Promise<PwaAssets> {
+  if (typeof UI_MANIFEST !== 'undefined') {
+    return {
+      manifest: UI_MANIFEST,
+      icons: {
+        'icon-192.png': decodeBase64ToBuffer(UI_ICON_192_B64),
+        'icon-512.png': decodeBase64ToBuffer(UI_ICON_512_B64),
+        'maskable-192.png': decodeBase64ToBuffer(UI_MASKABLE_192_B64),
+        'maskable-512.png': decodeBase64ToBuffer(UI_MASKABLE_512_B64),
+        'apple-touch-icon.png': decodeBase64ToBuffer(UI_APPLE_TOUCH_ICON_B64),
+      },
+    }
+  }
+
+  const __dirname = dirname(fileURLToPath(import.meta.url))
+  const pwaDir = join(__dirname, 'ui', 'pwa')
+  const iconsDir = join(pwaDir, 'icons')
+
+  const manifest = await Bun.file(join(pwaDir, 'manifest.webmanifest')).text()
+  const [icon192, icon512, maskable192, maskable512, appleTouch] = await Promise.all([
+    Bun.file(join(iconsDir, 'icon-192.png')).arrayBuffer(),
+    Bun.file(join(iconsDir, 'icon-512.png')).arrayBuffer(),
+    Bun.file(join(iconsDir, 'maskable-192.png')).arrayBuffer(),
+    Bun.file(join(iconsDir, 'maskable-512.png')).arrayBuffer(),
+    Bun.file(join(iconsDir, 'apple-touch-icon.png')).arrayBuffer(),
+  ])
+
+  return {
+    manifest,
+    icons: {
+      'icon-192.png': icon192,
+      'icon-512.png': icon512,
+      'maskable-192.png': maskable192,
+      'maskable-512.png': maskable512,
+      'apple-touch-icon.png': appleTouch,
+    },
+  }
+}
+
 export async function startServer(options: ServerOptions): Promise<void> {
   const rootPath = resolve(options.root)
   const listenHost = normalizeHost(options.host)
@@ -61,8 +116,32 @@ export async function startServer(options: ServerOptions): Promise<void> {
     process.exit(1)
   }
 
+  if (options.https && (!options.httpsCert || !options.httpsKey)) {
+    console.error('Error: HTTPS requires both cert and key paths')
+    process.exit(1)
+  }
+
+  let tlsConfig: { cert: string; key: string } | undefined
+  if (options.https && options.httpsCert && options.httpsKey) {
+    if (!existsSync(options.httpsCert)) {
+      console.error(`Error: TLS cert not found: ${options.httpsCert}`)
+      process.exit(1)
+    }
+    if (!existsSync(options.httpsKey)) {
+      console.error(`Error: TLS key not found: ${options.httpsKey}`)
+      process.exit(1)
+    }
+
+    const [cert, key] = await Promise.all([
+      Bun.file(options.httpsCert).text(),
+      Bun.file(options.httpsKey).text(),
+    ])
+    tlsConfig = { cert, key }
+  }
+
   // Load UI content (from build constants or dev files)
   const ui = await getUIContent()
+  const pwa = await getPwaAssets()
 
   const apiOptions = {
     root: rootPath,
@@ -74,6 +153,7 @@ export async function startServer(options: ServerOptions): Promise<void> {
   const server = Bun.serve({
     port: options.port,
     hostname: listenHost,
+    tls: tlsConfig,
     fetch: async (req) => {
       const url = new URL(req.url)
 
@@ -86,6 +166,18 @@ export async function startServer(options: ServerOptions): Promise<void> {
       if (url.pathname === '/app.js') {
         return new Response(ui.js, { headers: { 'Content-Type': 'application/javascript' } })
       }
+      if (url.pathname === '/manifest.webmanifest') {
+        return new Response(pwa.manifest, {
+          headers: { 'Content-Type': 'application/manifest+json' },
+        })
+      }
+      if (url.pathname.startsWith('/icons/')) {
+        const iconName = url.pathname.slice('/icons/'.length)
+        const icon = pwa.icons[iconName]
+        if (icon) {
+          return new Response(icon, { headers: { 'Content-Type': 'image/png' } })
+        }
+      }
 
       const apiResponse = await handleApiRequest(req, apiOptions)
       if (apiResponse) {
@@ -96,8 +188,8 @@ export async function startServer(options: ServerOptions): Promise<void> {
     },
   })
 
-  const localUrl = getLocalUrl(listenHost, options.port)
-  const networkUrl = getNetworkUrl(listenHost, options.port)
+  const localUrl = getLocalUrl(listenHost, options.port, options.https)
+  const networkUrl = getNetworkUrl(listenHost, options.port, options.https)
 
   console.log()
   console.log('  \x1b[1mBrowsey\x1b[0m is running!')
@@ -172,26 +264,28 @@ function normalizeHost(host: string): string {
   return host
 }
 
-function getLocalUrl(host: string, port: number): string {
+function getLocalUrl(host: string, port: number, https: boolean): string {
+  const protocol = https ? 'https' : 'http'
   if (host === '0.0.0.0' || host === '::') {
-    return `http://127.0.0.1:${port}`
+    return `${protocol}://127.0.0.1:${port}`
   }
   if (host === '::1') {
-    return `http://[::1]:${port}`
+    return `${protocol}://[::1]:${port}`
   }
-  return `http://${host}:${port}`
+  return `${protocol}://${host}:${port}`
 }
 
-function getNetworkUrl(host: string, port: number): string | null {
+function getNetworkUrl(host: string, port: number, https: boolean): string | null {
   if (host !== '0.0.0.0' && host !== '::') {
     return null
   }
 
+  const protocol = https ? 'https' : 'http'
   const interfaces = networkInterfaces()
   for (const iface of Object.values(interfaces)) {
     for (const config of iface ?? []) {
       if (config.family === 'IPv4' && !config.internal) {
-        return `http://${config.address}:${port}`
+        return `${protocol}://${config.address}:${port}`
       }
     }
   }

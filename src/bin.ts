@@ -21,7 +21,7 @@ program
 const serveCommand = new Command('serve')
   .description('Start the file browser server')
   .argument('[path]', 'Directory to serve', '.')
-  .option('-p, --port <port>', 'Port to listen on', '8080')
+  .option('-p, --port <port>', 'Port to listen on', '4200')
   .option('-h, --host <host>', 'Host to bind to', '0.0.0.0')
   .option('-i, --ignore <globs>', 'Ignore patterns (comma-separated)')
   .option('--open', 'Open browser automatically')
@@ -29,6 +29,9 @@ const serveCommand = new Command('serve')
   .option('--hidden', 'Show hidden files')
   .option('--no-qr', 'Do not display QR code')
   .option('--no-bonjour', 'Disable Bonjour service advertising')
+  .option('--no-https', 'Disable HTTPS')
+  .option('--https-cert <path>', 'Path to TLS certificate (PEM)', './certs/browsey.pem')
+  .option('--https-key <path>', 'Path to TLS private key (PEM)', './certs/browsey-key.pem')
   .action(async (pathArg: string, options: Record<string, unknown>) => {
     const requestedPort = parseInt(options.port as string, 10)
     if (isNaN(requestedPort) || requestedPort < 1 || requestedPort > 65535) {
@@ -42,6 +45,14 @@ const serveCommand = new Command('serve')
       console.log(`Port ${requestedPort} is busy. Using ${port} instead.`)
     }
 
+    const httpsEnabled = (options.https as boolean) ?? true
+    const httpsCert = options.httpsCert ? resolve(options.httpsCert as string) : undefined
+    const httpsKey = options.httpsKey ? resolve(options.httpsKey as string) : undefined
+    if (httpsEnabled && (!httpsCert || !httpsKey)) {
+      console.error('Error: HTTPS requires both --https-cert and --https-key')
+      process.exit(1)
+    }
+
     await startServer({
       root: resolve(pathArg),
       port,
@@ -53,6 +64,9 @@ const serveCommand = new Command('serve')
       bonjour: (options.bonjour as boolean) ?? true,
       ignorePatterns: parseIgnorePatterns(options.ignore as string | undefined),
       version: VERSION,
+      https: httpsEnabled,
+      httpsCert,
+      httpsKey,
     })
   })
 

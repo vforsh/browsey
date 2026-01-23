@@ -30,6 +30,21 @@ if (!clientOutput) {
 const html = await Bun.file(resolve(rootDir, 'src/ui/index.html')).text()
 const css = await Bun.file(resolve(rootDir, 'src/ui/styles.css')).text()
 const js = await clientOutput.text()
+const manifest = await Bun.file(
+  resolve(rootDir, 'src/ui/pwa/manifest.webmanifest'),
+).text()
+const [icon192, icon512, maskable192, maskable512, appleTouch] = await Promise.all([
+  Bun.file(resolve(rootDir, 'src/ui/pwa/icons/icon-192.png')).arrayBuffer(),
+  Bun.file(resolve(rootDir, 'src/ui/pwa/icons/icon-512.png')).arrayBuffer(),
+  Bun.file(resolve(rootDir, 'src/ui/pwa/icons/maskable-192.png')).arrayBuffer(),
+  Bun.file(resolve(rootDir, 'src/ui/pwa/icons/maskable-512.png')).arrayBuffer(),
+  Bun.file(resolve(rootDir, 'src/ui/pwa/icons/apple-touch-icon.png')).arrayBuffer(),
+])
+const icon192B64 = Buffer.from(icon192).toString('base64')
+const icon512B64 = Buffer.from(icon512).toString('base64')
+const maskable192B64 = Buffer.from(maskable192).toString('base64')
+const maskable512B64 = Buffer.from(maskable512).toString('base64')
+const appleTouchB64 = Buffer.from(appleTouch).toString('base64')
 
 const serverOutfile = resolve(distDir, 'browsey')
 const serverResult = await Bun.build({
@@ -44,6 +59,12 @@ const serverResult = await Bun.build({
     UI_HTML: JSON.stringify(html),
     UI_CSS: JSON.stringify(css),
     UI_JS: JSON.stringify(js),
+    UI_MANIFEST: JSON.stringify(manifest),
+    UI_ICON_192_B64: JSON.stringify(icon192B64),
+    UI_ICON_512_B64: JSON.stringify(icon512B64),
+    UI_MASKABLE_192_B64: JSON.stringify(maskable192B64),
+    UI_MASKABLE_512_B64: JSON.stringify(maskable512B64),
+    UI_APPLE_TOUCH_ICON_B64: JSON.stringify(appleTouchB64),
   },
 } as Bun.BuildConfig & { write?: boolean })
 

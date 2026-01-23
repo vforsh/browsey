@@ -19,6 +19,10 @@ Start a local web server to browse files from any device on your network - perfe
 - **QR code** - Scan to open on mobile instantly
 - **Zero config** - Just run `browsey` and go
 
+## PWA Install
+
+Browsey is installable as a PWA when served over HTTPS (or localhost). If you want Add to Home Screen on a remote device, put Browsey behind a TLS-terminating reverse proxy.
+
 ## Installation
 
 ```bash
@@ -58,8 +62,11 @@ browsey -i "node_modules,.git,*.log"
 # Show hidden files
 browsey --hidden
 
+# Disable HTTPS (HTTPS is default)
+browsey --no-https
+
 # All options
-browsey ./my-folder -p 8080 -h 0.0.0.0 -i "node_modules,.git" --hidden --open --no-readonly --no-qr
+browsey ./my-folder -p 4200 -h 0.0.0.0 -i "node_modules,.git" --hidden --open --no-readonly --no-qr
 ```
 
 ## Options
@@ -67,13 +74,16 @@ browsey ./my-folder -p 8080 -h 0.0.0.0 -i "node_modules,.git" --hidden --open --
 | Option | Description | Default |
 |--------|-------------|---------|
 | `[path]` | Directory to serve | `.` (current) |
-| `-p, --port <port>` | Port number | `8080` |
+| `-p, --port <port>` | Port number | `4200` |
 | `-h, --host <host>` | Host to bind | `0.0.0.0` |
 | `-i, --ignore <globs>` | Comma-separated ignore patterns | - |
 | `--open` | Open browser automatically | `false` |
 | `--no-readonly` | Allow file modifications | `false` |
 | `--hidden` | Show hidden files | `false` |
 | `--no-qr` | Do not display QR code | `false` |
+| `--no-https` | Disable HTTPS | - |
+| `--https-cert <path>` | Path to TLS certificate (PEM) | `./certs/browsey.pem` |
+| `--https-key <path>` | Path to TLS private key (PEM) | `./certs/browsey-key.pem` |
 
 ## API
 

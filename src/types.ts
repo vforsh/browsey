@@ -9,6 +9,9 @@ export type ServerOptions = {
   bonjour: boolean
   ignorePatterns: string[]
   version: string
+  https: boolean
+  httpsCert?: string
+  httpsKey?: string
 }
 
 export type FileItem = {

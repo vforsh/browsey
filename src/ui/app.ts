@@ -157,6 +157,15 @@ function getLanguage(extension: string | null): string | undefined {
   return LANGUAGE_MAP[extension.toLowerCase()]
 }
 
+function isIosStandalone(): boolean {
+  if (typeof window === 'undefined') return false
+  if (typeof navigator === 'undefined') return false
+  const isIos = /iphone|ipad|ipod/i.test(navigator.userAgent)
+  if (!isIos) return false
+  if ((navigator as Navigator & { standalone?: boolean }).standalone) return true
+  return window.matchMedia?.('(display-mode: standalone)').matches ?? false
+}
+
 class FileViewer {
   private overlay: HTMLElement
   private content: HTMLElement
@@ -611,6 +620,7 @@ class FileBrowser {
   private pathDisplay: HTMLElement
   private loading: HTMLElement
   private toast: HTMLElement
+  private useQueryRouting = false
   private pullStartY: number | null = null
   private pullTriggered = false
   private viewer: FileViewer
@@ -621,6 +631,7 @@ class FileBrowser {
     this.pathDisplay = document.getElementById('path-display')!
     this.loading = document.getElementById('loading')!
     this.toast = document.getElementById('toast')!
+    this.useQueryRouting = isIosStandalone()
     this.viewer = new FileViewer(
       () => this.handleViewerClose(),
       (path) => this.handleViewerNavigate(path)
@@ -948,6 +959,11 @@ class FileBrowser {
   private parseLocation(): { path: string; view: boolean } {
     const url = new URL(window.location.href)
     const view = url.searchParams.get('view') === '1'
+    const queryPath = url.searchParams.get('path')
+    if (queryPath) {
+      const normalized = queryPath.replace(/\/+/g, '/').replace(/\/$/, '') || '/'
+      return { path: normalized, view }
+    }
     const pathname = decodeURIComponent(url.pathname)
     const path = pathname.replace(/\/+/g, '/').replace(/\/$/, '') || '/'
     return { path, view }
@@ -955,7 +971,15 @@ class FileBrowser {
 
   private updateHistory(path: string, view: boolean, replaceHistory = false): void {
     const url = new URL(window.location.href)
-    url.pathname = path === '/' ? '/' : path
+    if (this.useQueryRouting) {
+      if (path === '/') {
+        url.searchParams.delete('path')
+      } else {
+        url.searchParams.set('path', path)
+      }
+    } else {
+      url.pathname = path === '/' ? '/' : path
+    }
     if (view) {
       url.searchParams.set('view', '1')
     } else {
