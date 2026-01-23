@@ -33,18 +33,22 @@ const js = await clientOutput.text()
 const manifest = await Bun.file(
   resolve(rootDir, 'src/ui/pwa/manifest.webmanifest'),
 ).text()
-const [icon192, icon512, maskable192, maskable512, appleTouch] = await Promise.all([
+const [icon192, icon512, maskable192, maskable512, appleTouch, screenshotWide, screenshotMobile] = await Promise.all([
   Bun.file(resolve(rootDir, 'src/ui/pwa/icons/icon-192.png')).arrayBuffer(),
   Bun.file(resolve(rootDir, 'src/ui/pwa/icons/icon-512.png')).arrayBuffer(),
   Bun.file(resolve(rootDir, 'src/ui/pwa/icons/maskable-192.png')).arrayBuffer(),
   Bun.file(resolve(rootDir, 'src/ui/pwa/icons/maskable-512.png')).arrayBuffer(),
   Bun.file(resolve(rootDir, 'src/ui/pwa/icons/apple-touch-icon.png')).arrayBuffer(),
+  Bun.file(resolve(rootDir, 'src/ui/pwa/screenshots/screenshot-wide.png')).arrayBuffer(),
+  Bun.file(resolve(rootDir, 'src/ui/pwa/screenshots/screenshot-mobile.png')).arrayBuffer(),
 ])
 const icon192B64 = Buffer.from(icon192).toString('base64')
 const icon512B64 = Buffer.from(icon512).toString('base64')
 const maskable192B64 = Buffer.from(maskable192).toString('base64')
 const maskable512B64 = Buffer.from(maskable512).toString('base64')
 const appleTouchB64 = Buffer.from(appleTouch).toString('base64')
+const screenshotWideB64 = Buffer.from(screenshotWide).toString('base64')
+const screenshotMobileB64 = Buffer.from(screenshotMobile).toString('base64')
 
 const serverOutfile = resolve(distDir, 'browsey')
 const serverResult = await Bun.build({
@@ -65,6 +69,8 @@ const serverResult = await Bun.build({
     UI_MASKABLE_192_B64: JSON.stringify(maskable192B64),
     UI_MASKABLE_512_B64: JSON.stringify(maskable512B64),
     UI_APPLE_TOUCH_ICON_B64: JSON.stringify(appleTouchB64),
+    UI_SCREENSHOT_WIDE_B64: JSON.stringify(screenshotWideB64),
+    UI_SCREENSHOT_MOBILE_B64: JSON.stringify(screenshotMobileB64),
   },
 } as Bun.BuildConfig & { write?: boolean })
 

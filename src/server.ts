@@ -18,6 +18,8 @@ declare const UI_ICON_512_B64: string
 declare const UI_MASKABLE_192_B64: string
 declare const UI_MASKABLE_512_B64: string
 declare const UI_APPLE_TOUCH_ICON_B64: string
+declare const UI_SCREENSHOT_WIDE_B64: string
+declare const UI_SCREENSHOT_MOBILE_B64: string
 
 // Dev mode: load UI files from disk if constants aren't defined
 async function getUIContent(): Promise<{ html: string; css: string; js: string }> {
@@ -60,6 +62,7 @@ async function getUIContent(): Promise<{ html: string; css: string; js: string }
 type PwaAssets = {
   manifest: string
   icons: Record<string, ArrayBuffer>
+  screenshots: Record<string, ArrayBuffer>
 }
 
 function decodeBase64ToBuffer(base64: string): ArrayBuffer {
@@ -78,6 +81,10 @@ async function getPwaAssets(): Promise<PwaAssets> {
         'maskable-512.png': decodeBase64ToBuffer(UI_MASKABLE_512_B64),
         'apple-touch-icon.png': decodeBase64ToBuffer(UI_APPLE_TOUCH_ICON_B64),
       },
+      screenshots: {
+        'screenshot-wide.png': decodeBase64ToBuffer(UI_SCREENSHOT_WIDE_B64),
+        'screenshot-mobile.png': decodeBase64ToBuffer(UI_SCREENSHOT_MOBILE_B64),
+      },
     }
   }
 
@@ -86,12 +93,14 @@ async function getPwaAssets(): Promise<PwaAssets> {
   const iconsDir = join(pwaDir, 'icons')
 
   const manifest = await Bun.file(join(pwaDir, 'manifest.webmanifest')).text()
-  const [icon192, icon512, maskable192, maskable512, appleTouch] = await Promise.all([
+  const [icon192, icon512, maskable192, maskable512, appleTouch, screenshotWide, screenshotMobile] = await Promise.all([
     Bun.file(join(iconsDir, 'icon-192.png')).arrayBuffer(),
     Bun.file(join(iconsDir, 'icon-512.png')).arrayBuffer(),
     Bun.file(join(iconsDir, 'maskable-192.png')).arrayBuffer(),
     Bun.file(join(iconsDir, 'maskable-512.png')).arrayBuffer(),
     Bun.file(join(iconsDir, 'apple-touch-icon.png')).arrayBuffer(),
+    Bun.file(join(pwaDir, 'screenshots', 'screenshot-wide.png')).arrayBuffer(),
+    Bun.file(join(pwaDir, 'screenshots', 'screenshot-mobile.png')).arrayBuffer(),
   ])
 
   return {
@@ -102,6 +111,10 @@ async function getPwaAssets(): Promise<PwaAssets> {
       'maskable-192.png': maskable192,
       'maskable-512.png': maskable512,
       'apple-touch-icon.png': appleTouch,
+    },
+    screenshots: {
+      'screenshot-wide.png': screenshotWide,
+      'screenshot-mobile.png': screenshotMobile,
     },
   }
 }
@@ -176,6 +189,13 @@ export async function startServer(options: ServerOptions): Promise<void> {
         const icon = pwa.icons[iconName]
         if (icon) {
           return new Response(icon, { headers: { 'Content-Type': 'image/png' } })
+        }
+      }
+      if (url.pathname.startsWith('/screenshots/')) {
+        const screenshotName = url.pathname.slice('/screenshots/'.length)
+        const screenshot = pwa.screenshots[screenshotName]
+        if (screenshot) {
+          return new Response(screenshot, { headers: { 'Content-Type': 'image/png' } })
         }
       }
 

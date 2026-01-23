@@ -6,6 +6,25 @@
   "display": "fullscreen",
   "background_color": "#0f0f17",
   "theme_color": "#1a1a2e",
+  "protocol_handlers": [
+    {
+      "protocol": "web+browsey",
+      "url": "/?path=%s"
+    }
+  ],
+  "screenshots": [
+    {
+      "src": "/screenshots/screenshot-wide.png",
+      "sizes": "1280x720",
+      "type": "image/png",
+      "form_factor": "wide"
+    },
+    {
+      "src": "/screenshots/screenshot-mobile.png",
+      "sizes": "750x1334",
+      "type": "image/png"
+    }
+  ],
   "icons": [
     {
       "src": "/icons/icon-192.png",
