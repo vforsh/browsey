@@ -43,6 +43,15 @@ type StatResponse = {
   extension: string | null
 }
 
+type SearchResult = {
+  name: string
+  path: string
+  absolutePath: string
+  type: 'file' | 'directory'
+  score: number
+  extension: string | null
+}
+
 type ImageNavContext = {
   paths: string[]
   index: number
@@ -613,6 +622,248 @@ class InfoModal {
   }
 }
 
+class SearchOverlay {
+  private overlay: HTMLElement
+  private input: HTMLInputElement
+  private results: HTMLElement
+  private closeBtn: HTMLElement
+  private debounceTimer: number | null = null
+  private currentQuery = ''
+  private searchPath = '/'
+  private onNavigate: (path: string, highlightFile?: string) => void
+
+  constructor(onNavigate: (path: string, highlightFile?: string) => void) {
+    this.onNavigate = onNavigate
+    this.overlay = document.getElementById('search-overlay')!
+    this.input = document.getElementById('search-input') as HTMLInputElement
+    this.results = document.getElementById('search-results')!
+    this.closeBtn = document.getElementById('search-close')!
+
+    this.setupEventListeners()
+  }
+
+  private setupEventListeners(): void {
+    this.closeBtn.addEventListener('click', () => this.close())
+
+    this.overlay.addEventListener('click', (e) => {
+      if (e.target === this.overlay) this.close()
+    })
+
+    this.input.addEventListener('input', () => {
+      this.debounceSearch()
+    })
+
+    this.input.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        this.close()
+      } else if (e.key === 'Enter') {
+        e.preventDefault()
+        this.selectFocusedResult()
+      } else if (e.key === 'ArrowDown') {
+        e.preventDefault()
+        this.focusNextResult()
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault()
+        this.focusPrevResult()
+      }
+    })
+
+    this.results.addEventListener('click', (e) => {
+      const item = (e.target as HTMLElement).closest('.search-result-item')
+      if (item) {
+        const path = item.getAttribute('data-path')
+        const type = item.getAttribute('data-type')
+        if (path) this.selectResult(path, type as 'file' | 'directory')
+      }
+    })
+
+    document.addEventListener('keydown', (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault()
+        if (this.overlay.hidden) {
+          this.open(this.searchPath)
+        } else {
+          this.close()
+        }
+      }
+    })
+  }
+
+  open(currentPath: string): void {
+    this.searchPath = currentPath
+    this.overlay.hidden = false
+    this.input.value = ''
+    this.currentQuery = ''
+    this.results.innerHTML = '<div class="search-hint">Type to search files...</div>'
+    this.input.focus()
+  }
+
+  close(): void {
+    this.overlay.hidden = true
+    this.input.value = ''
+    this.currentQuery = ''
+    if (this.debounceTimer) {
+      clearTimeout(this.debounceTimer)
+      this.debounceTimer = null
+    }
+  }
+
+  setSearchPath(path: string): void {
+    this.searchPath = path
+  }
+
+  private debounceSearch(): void {
+    if (this.debounceTimer) {
+      clearTimeout(this.debounceTimer)
+    }
+    this.debounceTimer = window.setTimeout(() => {
+      this.performSearch()
+    }, 150)
+  }
+
+  private async performSearch(): Promise<void> {
+    const query = this.input.value.trim()
+
+    if (query.length === 0) {
+      this.results.innerHTML = '<div class="search-hint">Type to search files...</div>'
+      this.currentQuery = ''
+      return
+    }
+
+    if (query === this.currentQuery) return
+    this.currentQuery = query
+
+    this.results.innerHTML = '<div class="search-loading">Searching...</div>'
+
+    try {
+      const response = await fetch(
+        `/api/search?path=${encodeURIComponent(this.searchPath)}&q=${encodeURIComponent(query)}&limit=50`
+      )
+
+      if (!response.ok) {
+        throw new Error('Search failed')
+      }
+
+      const data = await response.json()
+      this.renderResults(data.results, query)
+    } catch {
+      this.results.innerHTML = '<div class="search-error">Search failed</div>'
+    }
+  }
+
+  private renderResults(results: SearchResult[], query: string): void {
+    if (results.length === 0) {
+      this.results.innerHTML = '<div class="search-empty">No results found</div>'
+      return
+    }
+
+    this.results.innerHTML = results
+      .map((result, index) => {
+        const icon = result.type === 'directory' ? Folder : File
+        const highlightedName = this.highlightMatches(result.name, query)
+        const parentPath = this.getParentPath(result.path)
+
+        return `
+          <div class="search-result-item"
+               data-path="${this.escapeHtml(result.path)}"
+               data-type="${result.type}"
+               tabindex="0"
+               ${index === 0 ? 'data-focused="true"' : ''}>
+            <span class="search-result-icon" data-type="${result.type}">${icon}</span>
+            <div class="search-result-info">
+              <div class="search-result-name">${highlightedName}</div>
+              <div class="search-result-path">${this.escapeHtml(parentPath)}</div>
+            </div>
+          </div>
+        `
+      })
+      .join('')
+  }
+
+  private highlightMatches(text: string, query: string): string {
+    const lowerText = text.toLowerCase()
+    const lowerQuery = query.toLowerCase()
+    let result = ''
+    let queryIndex = 0
+
+    for (let i = 0; i < text.length; i++) {
+      if (queryIndex < lowerQuery.length && lowerText[i] === lowerQuery[queryIndex]) {
+        result += `<mark>${this.escapeHtml(text[i]!)}</mark>`
+        queryIndex++
+      } else {
+        result += this.escapeHtml(text[i]!)
+      }
+    }
+
+    return result
+  }
+
+  private getParentPath(path: string): string {
+    const parts = path.split('/').filter(Boolean)
+    parts.pop()
+    return parts.length > 0 ? '/' + parts.join('/') : '/'
+  }
+
+  private selectResult(path: string, type: 'file' | 'directory'): void {
+    this.close()
+
+    // path is relative to searchPath, so we need to combine them
+    const fullPath = this.searchPath === '/'
+      ? path
+      : this.searchPath + path
+
+    if (type === 'directory') {
+      this.onNavigate(fullPath)
+    } else {
+      const parentPath = this.getParentPath(fullPath)
+      const fileName = fullPath.split('/').pop() || ''
+      this.onNavigate(parentPath, fileName)
+    }
+  }
+
+  private selectFocusedResult(): void {
+    const focusedItem = this.results.querySelector('.search-result-item[data-focused="true"]')
+    if (focusedItem) {
+      const path = focusedItem.getAttribute('data-path')
+      const type = focusedItem.getAttribute('data-type') as 'file' | 'directory'
+      if (path) this.selectResult(path, type)
+    }
+  }
+
+  private focusNextResult(): void {
+    const items = this.results.querySelectorAll('.search-result-item')
+    const focused = this.results.querySelector('[data-focused="true"]')
+    const focusedIndex = Array.from(items).indexOf(focused as Element)
+    const nextIndex = Math.min(focusedIndex + 1, items.length - 1)
+    this.setFocusedResult(items, nextIndex)
+  }
+
+  private focusPrevResult(): void {
+    const items = this.results.querySelectorAll('.search-result-item')
+    const focused = this.results.querySelector('[data-focused="true"]')
+    const focusedIndex = Array.from(items).indexOf(focused as Element)
+    const prevIndex = Math.max(focusedIndex - 1, 0)
+    this.setFocusedResult(items, prevIndex)
+  }
+
+  private setFocusedResult(items: NodeListOf<Element>, index: number): void {
+    items.forEach((item, i) => {
+      if (i === index) {
+        item.setAttribute('data-focused', 'true')
+        ;(item as HTMLElement).scrollIntoView({ block: 'nearest' })
+      } else {
+        item.removeAttribute('data-focused')
+      }
+    })
+  }
+
+  private escapeHtml(text: string): string {
+    const div = document.createElement('div')
+    div.textContent = text
+    return div.innerHTML
+  }
+}
+
 class FileBrowser {
   private currentPath = '/'
   private currentItems: FileItem[] = []
@@ -625,6 +876,8 @@ class FileBrowser {
   private pullTriggered = false
   private viewer: FileViewer
   private infoModal: InfoModal
+  private searchOverlay: SearchOverlay
+  private highlightedFile: string | null = null
 
   constructor() {
     this.fileList = document.getElementById('file-list')!
@@ -637,11 +890,19 @@ class FileBrowser {
       (path) => this.handleViewerNavigate(path)
     )
     this.infoModal = new InfoModal()
+    this.searchOverlay = new SearchOverlay(
+      (path, highlightFile) => this.handleSearchNavigation(path, highlightFile)
+    )
 
     this.setupEventListeners()
     this.setupPullToRefresh()
     window.addEventListener('popstate', () => this.handlePopState())
     this.loadFromLocation()
+  }
+
+  private handleSearchNavigation(path: string, highlightFile?: string): void {
+    this.highlightedFile = highlightFile || null
+    this.navigate(path)
   }
 
   private getImageNavContext(imagePath: string): ImageNavContext | undefined {
@@ -665,6 +926,9 @@ class FileBrowser {
   private setupEventListeners(): void {
     document.getElementById('btn-back')?.addEventListener('click', () => this.goUp())
     document.getElementById('btn-refresh')?.addEventListener('click', () => this.refresh())
+    document.getElementById('btn-search')?.addEventListener('click', () => {
+      this.searchOverlay.open(this.currentPath)
+    })
 
     // File item clicks (delegated)
     this.fileList.addEventListener('click', (e) => {
@@ -750,6 +1014,7 @@ class FileBrowser {
     // Normalize path
     path = path.replace(/\/+/g, '/').replace(/\/$/, '') || '/'
     this.currentPath = path
+    this.searchOverlay.setSearchPath(path)
     this.renderBreadcrumbs(path)
     if (options.updateHistory !== false) {
       this.updateHistory(path, false, options.replaceHistory)
@@ -841,6 +1106,29 @@ class FileBrowser {
       .join('')
 
     this.fileList.insertAdjacentHTML('beforeend', html)
+
+    // Handle file highlighting from search navigation
+    if (this.highlightedFile) {
+      const fileToHighlight = this.highlightedFile
+      this.highlightedFile = null
+
+      requestAnimationFrame(() => {
+        const items = this.fileList.querySelectorAll('.file-item')
+        for (let i = 0; i < items.length; i++) {
+          const item = items[i]!
+          const itemPath = item.getAttribute('data-path')
+          if (itemPath && itemPath.endsWith('/' + fileToHighlight)) {
+            ;(item as HTMLElement).scrollIntoView({ block: 'center', behavior: 'smooth' })
+            item.classList.add('highlighted')
+
+            setTimeout(() => {
+              item.classList.remove('highlighted')
+            }, 2000)
+            break
+          }
+        }
+      })
+    }
   }
 
   private renderEmpty(): void {

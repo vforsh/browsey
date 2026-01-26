@@ -50,3 +50,17 @@ export interface RegistryFile {
   version: 1            // Schema version for migrations
   instances: InstanceInfo[]
 }
+
+export type SearchResult = {
+  name: string
+  path: string           // Relative path from search root
+  absolutePath: string
+  type: 'file' | 'directory'
+  score: number
+  extension: string | null
+}
+
+export type SearchResponse = {
+  query: string
+  results: SearchResult[]
+}
