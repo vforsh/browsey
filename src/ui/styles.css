@@ -924,3 +924,212 @@ body {
     display: none;
   }
 }
+
+/* Git Status Bar */
+.git-status-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 16px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  flex-shrink: 0;
+  gap: 12px;
+}
+
+.git-status-bar[hidden] {
+  display: none;
+}
+
+.git-status-content {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.git-branch {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--accent);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.git-branch::before {
+  content: '';
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  background: currentColor;
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2'%3E%3Cline x1='6' y1='3' x2='6' y2='15'/%3E%3Ccircle cx='18' cy='6' r='3'/%3E%3Ccircle cx='6' cy='18' r='3'/%3E%3Cpath d='M18 9a9 9 0 0 1-9 9'/%3E%3C/svg%3E");
+  mask-size: contain;
+  mask-repeat: no-repeat;
+  flex-shrink: 0;
+}
+
+.git-state {
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.git-state.clean {
+  color: #6bcb77;
+}
+
+.git-state.dirty {
+  color: #ffd93d;
+}
+
+.git-info-btn {
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+}
+
+.git-info-btn svg {
+  width: 18px;
+  height: 18px;
+}
+
+/* Git Modal */
+.git-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 16px;
+}
+
+.git-modal-overlay[hidden] {
+  display: none;
+}
+
+.git-modal {
+  background: var(--bg-secondary);
+  border-radius: 12px;
+  width: 100%;
+  max-width: 450px;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.git-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  flex-shrink: 0;
+}
+
+.git-modal-title {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.git-modal-content {
+  padding: 16px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.git-section {
+  margin-bottom: 16px;
+}
+
+.git-section:last-child {
+  margin-bottom: 0;
+}
+
+.git-section-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 8px;
+}
+
+.git-section-content {
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.git-row {
+  display: flex;
+  padding: 6px 0;
+  gap: 12px;
+}
+
+.git-row-label {
+  width: 80px;
+  flex-shrink: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.git-row-value {
+  flex: 1;
+  font-size: 13px;
+  word-break: break-all;
+}
+
+.git-commit-message {
+  font-style: italic;
+  color: var(--text-secondary);
+}
+
+.git-status-counts {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.git-status-count {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.git-status-count.staged {
+  color: #6bcb77;
+}
+
+.git-status-count.unstaged {
+  color: #ffd93d;
+}
+
+.git-status-count.untracked {
+  color: var(--text-secondary);
+}
+
+.git-remote-url {
+  font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Fira Code', monospace;
+  font-size: 12px;
+  background: var(--bg-primary);
+  padding: 8px 12px;
+  border-radius: 6px;
+  word-break: break-all;
+}
+
+/* Responsive adjustments for git status bar */
+@media (min-width: 768px) {
+  .git-status-bar {
+    max-width: 900px;
+    margin: 0 auto;
+    width: 100%;
+  }
+}

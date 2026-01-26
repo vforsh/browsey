@@ -1,4 +1,4 @@
-import { Bonjour, type Service } from 'bonjour-service'
+import { Bonjour, type Service, type ServiceConfig } from 'bonjour-service'
 import { hostname, networkInterfaces } from 'os'
 
 let bonjourInstance: Bonjour | null = null
@@ -34,9 +34,10 @@ export function advertiseService(port: number, rootPath: string): () => void {
 
   // Specify interface to avoid multicast on all interfaces (which can break networking)
   // Also provide error callback to prevent unhandled errors from crashing
+  // Note: 'interface' option is passed to multicast-dns but not in bonjour-service types
   bonjourInstance = new Bonjour(
-    iface ? { interface: iface } : {},
-    (err) => {
+    iface ? { interface: iface } as unknown as Partial<ServiceConfig> : undefined,
+    (err: Error) => {
       // Log but don't crash - Bonjour is optional functionality
       console.warn('[bonjour] mDNS error:', err.message)
     }

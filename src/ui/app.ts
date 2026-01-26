@@ -27,6 +27,7 @@ type FileItem = {
 
 type ListResponse = {
   path: string
+  absolutePath: string
   items: FileItem[]
 }
 
@@ -50,6 +51,24 @@ type SearchResult = {
   type: 'file' | 'directory'
   score: number
   extension: string | null
+}
+
+type GitStatusResponse = {
+  isRepo: boolean
+  branch: string | null
+  isDirty: boolean
+  staged: number
+  unstaged: number
+  untracked: number
+  lastCommit: {
+    hash: string
+    shortHash: string
+    author: string
+    date: string
+    message: string
+  } | null
+  remoteUrl: string | null
+  repoRoot: string | null
 }
 
 type ImageNavContext = {
@@ -864,8 +883,189 @@ class SearchOverlay {
   }
 }
 
+class GitStatusBar {
+  private statusBar: HTMLElement
+  private branchEl: HTMLElement
+  private stateEl: HTMLElement
+  private infoBtn: HTMLElement
+  private modalOverlay: HTMLElement
+  private modalContent: HTMLElement
+  private modalCloseBtn: HTMLElement
+  private currentStatus: GitStatusResponse | null = null
+
+  constructor() {
+    this.statusBar = document.getElementById('git-status-bar')!
+    this.branchEl = document.getElementById('git-branch')!
+    this.stateEl = document.getElementById('git-state')!
+    this.infoBtn = document.getElementById('git-info-btn')!
+    this.modalOverlay = document.getElementById('git-modal-overlay')!
+    this.modalContent = document.getElementById('git-modal-content')!
+    this.modalCloseBtn = document.getElementById('git-modal-close')!
+
+    this.setupEventListeners()
+  }
+
+  private setupEventListeners(): void {
+    this.infoBtn.addEventListener('click', () => this.openModal())
+    this.modalCloseBtn.addEventListener('click', () => this.closeModal())
+    this.modalOverlay.addEventListener('click', (e) => {
+      if (e.target === this.modalOverlay) this.closeModal()
+    })
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && !this.modalOverlay.hidden) {
+        this.closeModal()
+      }
+    })
+  }
+
+  async update(path: string): Promise<void> {
+    try {
+      const response = await fetch(`/api/git?path=${encodeURIComponent(path)}`)
+      if (!response.ok) {
+        this.hide()
+        return
+      }
+
+      const status: GitStatusResponse = await response.json()
+      this.currentStatus = status
+
+      if (!status.isRepo) {
+        this.hide()
+        return
+      }
+
+      this.render(status)
+      this.show()
+    } catch {
+      this.hide()
+    }
+  }
+
+  private render(status: GitStatusResponse): void {
+    this.branchEl.textContent = status.branch || 'unknown'
+
+    if (status.isDirty) {
+      const parts: string[] = []
+      if (status.staged > 0) parts.push(`+${status.staged}`)
+      if (status.unstaged > 0) parts.push(`~${status.unstaged}`)
+      if (status.untracked > 0) parts.push(`?${status.untracked}`)
+      this.stateEl.textContent = parts.join(' ')
+      this.stateEl.className = 'git-state dirty'
+    } else {
+      this.stateEl.textContent = 'clean'
+      this.stateEl.className = 'git-state clean'
+    }
+  }
+
+  private show(): void {
+    this.statusBar.hidden = false
+  }
+
+  private hide(): void {
+    this.statusBar.hidden = true
+    this.currentStatus = null
+  }
+
+  private openModal(): void {
+    if (!this.currentStatus) return
+    this.renderModal(this.currentStatus)
+    this.modalOverlay.hidden = false
+  }
+
+  private closeModal(): void {
+    this.modalOverlay.hidden = true
+  }
+
+  private renderModal(status: GitStatusResponse): void {
+    const sections: string[] = []
+
+    // Branch section
+    sections.push(`
+      <div class="git-section">
+        <div class="git-section-title">Branch</div>
+        <div class="git-section-content">${this.escapeHtml(status.branch || 'unknown')}</div>
+      </div>
+    `)
+
+    // Status section
+    const hasChanges = status.staged > 0 || status.unstaged > 0 || status.untracked > 0
+    sections.push(`
+      <div class="git-section">
+        <div class="git-section-title">Working Tree</div>
+        <div class="git-section-content">
+          ${hasChanges ? `
+            <div class="git-status-counts">
+              ${status.staged > 0 ? `<span class="git-status-count staged">${status.staged} staged</span>` : ''}
+              ${status.unstaged > 0 ? `<span class="git-status-count unstaged">${status.unstaged} modified</span>` : ''}
+              ${status.untracked > 0 ? `<span class="git-status-count untracked">${status.untracked} untracked</span>` : ''}
+            </div>
+          ` : '<span class="git-state clean">Clean</span>'}
+        </div>
+      </div>
+    `)
+
+    // Last commit section
+    if (status.lastCommit) {
+      const commitDate = new Date(status.lastCommit.date)
+      const formattedDate = commitDate.toLocaleString(undefined, {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+      })
+
+      sections.push(`
+        <div class="git-section">
+          <div class="git-section-title">Last Commit</div>
+          <div class="git-section-content">
+            <div class="git-row">
+              <span class="git-row-label">Hash</span>
+              <span class="git-row-value">${this.escapeHtml(status.lastCommit.shortHash)}</span>
+            </div>
+            <div class="git-row">
+              <span class="git-row-label">Author</span>
+              <span class="git-row-value">${this.escapeHtml(status.lastCommit.author)}</span>
+            </div>
+            <div class="git-row">
+              <span class="git-row-label">Date</span>
+              <span class="git-row-value">${formattedDate}</span>
+            </div>
+            <div class="git-row">
+              <span class="git-row-label">Message</span>
+              <span class="git-row-value git-commit-message">${this.escapeHtml(status.lastCommit.message)}</span>
+            </div>
+          </div>
+        </div>
+      `)
+    }
+
+    // Remote URL section
+    if (status.remoteUrl) {
+      sections.push(`
+        <div class="git-section">
+          <div class="git-section-title">Remote</div>
+          <div class="git-section-content">
+            <div class="git-remote-url">${this.escapeHtml(status.remoteUrl)}</div>
+          </div>
+        </div>
+      `)
+    }
+
+    this.modalContent.innerHTML = sections.join('')
+  }
+
+  private escapeHtml(text: string): string {
+    const div = document.createElement('div')
+    div.textContent = text
+    return div.innerHTML
+  }
+}
+
 class FileBrowser {
   private currentPath = '/'
+  private currentAbsolutePath = ''
   private currentItems: FileItem[] = []
   private fileList: HTMLElement
   private pathDisplay: HTMLElement
@@ -877,6 +1077,7 @@ class FileBrowser {
   private viewer: FileViewer
   private infoModal: InfoModal
   private searchOverlay: SearchOverlay
+  private gitStatusBar: GitStatusBar
   private highlightedFile: string | null = null
 
   constructor() {
@@ -893,6 +1094,7 @@ class FileBrowser {
     this.searchOverlay = new SearchOverlay(
       (path, highlightFile) => this.handleSearchNavigation(path, highlightFile)
     )
+    this.gitStatusBar = new GitStatusBar()
 
     this.setupEventListeners()
     this.setupPullToRefresh()
@@ -956,7 +1158,8 @@ class FileBrowser {
       // Handle item click (navigate, view, or download)
       const item = target.closest('.file-item') as HTMLElement
       if (item) {
-        const path = item.getAttribute('data-path')!
+        const path = item.getAttribute('data-path')
+        if (!path) return // Virtual "." item has no path, ignore clicks
         const type = item.getAttribute('data-type')!
         const extension = item.getAttribute('data-extension') || null
         this.handleItemClick(path, type as 'file' | 'directory', extension)
@@ -1031,7 +1234,9 @@ class FileBrowser {
 
       const data: ListResponse = await response.json()
       this.currentItems = data.items
+      this.currentAbsolutePath = data.absolutePath
       this.renderItems(data.items)
+      this.gitStatusBar.update(path)
       if (options.openViewerPath) {
         const nav = this.getImageNavContext(options.openViewerPath)
         this.viewer.open(options.openViewerPath, nav)
@@ -1060,6 +1265,7 @@ class FileBrowser {
     // Render virtual ".." row for non-root directories
     if (this.currentPath !== '/') {
       const parentPath = this.getParentPath(this.currentPath)
+      const parentAbsolutePath = this.getParentPath(this.currentAbsolutePath)
       this.fileList.insertAdjacentHTML(
         'beforeend',
         `
@@ -1068,10 +1274,45 @@ class FileBrowser {
           <div class="file-info">
             <div class="file-name">..</div>
           </div>
+          <div class="file-actions">
+            <button class="btn-file-action info" data-path="${this.escapeHtml(parentPath)}" data-absolute-path="${this.escapeHtml(parentAbsolutePath)}" aria-label="Info">
+              ${Info}
+            </button>
+            <button class="btn-file-action copy" data-absolute-path="${this.escapeHtml(parentAbsolutePath)}" aria-label="Copy path">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>
+              </svg>
+            </button>
+          </div>
         </div>
       `
       )
     }
+
+    // Render virtual "." row for current directory (alias)
+    this.fileList.insertAdjacentHTML(
+      'beforeend',
+      `
+      <div class="file-item file-item-current" data-type="directory" data-extension="">
+        <span class="file-icon">${FolderOpen}</span>
+        <div class="file-info">
+          <div class="file-name">.</div>
+        </div>
+        <div class="file-actions">
+          <button class="btn-file-action info" data-path="${this.escapeHtml(this.currentPath)}" data-absolute-path="${this.escapeHtml(this.currentAbsolutePath)}" aria-label="Info">
+            ${Info}
+          </button>
+          <button class="btn-file-action copy" data-absolute-path="${this.escapeHtml(this.currentAbsolutePath)}" aria-label="Copy path">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+              <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+    `
+    )
 
     if (items.length === 0 && this.currentPath === '/') {
       this.renderEmpty()

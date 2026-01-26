@@ -25,6 +25,7 @@ export type FileItem = {
 
 export type ListResponse = {
   path: string
+  absolutePath: string
   items: FileItem[]
 }
 
@@ -63,4 +64,22 @@ export type SearchResult = {
 export type SearchResponse = {
   query: string
   results: SearchResult[]
+}
+
+export type GitStatusResponse = {
+  isRepo: boolean
+  branch: string | null
+  isDirty: boolean
+  staged: number
+  unstaged: number
+  untracked: number
+  lastCommit: {
+    hash: string
+    shortHash: string
+    author: string
+    date: string
+    message: string
+  } | null
+  remoteUrl: string | null
+  repoRoot: string | null
 }

@@ -3,7 +3,8 @@ import { basename, extname, join, relative } from 'path'
 import { getMimeType } from './utils/mime.js'
 import { createIgnoreMatcher, type IgnoreMatcher } from './ignore.js'
 import { resolveSafePath } from './security.js'
-import type { ApiRoutesOptions, FileItem, ListResponse, SearchResult, SearchResponse } from './types.js'
+import { getGitStatus } from './git.js'
+import type { ApiRoutesOptions, FileItem, ListResponse, SearchResult, SearchResponse, GitStatusResponse } from './types.js'
 
 const JSON_HEADERS = {
   'Content-Type': 'application/json',
@@ -84,6 +85,9 @@ export async function handleApiRequest(
   if (route === '/search') {
     return handleSearch(url, options)
   }
+  if (route === '/git') {
+    return handleGit(url, options)
+  }
 
   return jsonResponse({ error: 'Not found' }, { status: 404 })
 }
@@ -138,6 +142,7 @@ async function handleList(url: URL, options: ApiRoutesOptions): Promise<Response
 
     const response: ListResponse = {
       path: safePath.relativePath ? `/${safePath.relativePath}` : '/',
+      absolutePath: safePath.fullPath,
       items,
     }
 
@@ -436,6 +441,23 @@ async function handleSearch(url: URL, options: ApiRoutesOptions): Promise<Respon
     if (code === 'ENOENT') {
       return jsonResponse({ error: 'Directory not found' }, { status: 404 })
     }
+    return jsonResponse({ error: 'Internal server error' }, { status: 500 })
+  }
+}
+
+async function handleGit(url: URL, options: ApiRoutesOptions): Promise<Response> {
+  const requestPath = url.searchParams.get('path') || '/'
+  const safePath = resolveSafePath(options.root, requestPath)
+
+  if (!safePath) {
+    return jsonResponse({ error: 'Access denied: Invalid path' }, { status: 403 })
+  }
+
+  try {
+    const status = await getGitStatus(safePath.fullPath)
+    const response: GitStatusResponse = status
+    return jsonResponse(response)
+  } catch {
     return jsonResponse({ error: 'Internal server error' }, { status: 500 })
   }
 }
