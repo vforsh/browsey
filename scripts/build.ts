@@ -9,7 +9,7 @@ console.log('Building browsey...')
 mkdirSync(distDir, { recursive: true })
 
 const clientResult = await Bun.build({
-  entrypoints: [resolve(rootDir, 'src/ui/app.ts')],
+  entrypoints: [resolve(rootDir, 'packages/app/src/ui/app.ts')],
   minify: true,
   format: 'iife',
   target: 'browser',
@@ -27,20 +27,20 @@ if (!clientOutput) {
   process.exit(1)
 }
 
-const html = await Bun.file(resolve(rootDir, 'src/ui/index.html')).text()
-const css = await Bun.file(resolve(rootDir, 'src/ui/styles.css')).text()
+const html = await Bun.file(resolve(rootDir, 'packages/app/src/ui/index.html')).text()
+const css = await Bun.file(resolve(rootDir, 'packages/app/src/ui/styles.css')).text()
 const js = await clientOutput.text()
 const manifest = await Bun.file(
-  resolve(rootDir, 'src/ui/pwa/manifest.webmanifest'),
+  resolve(rootDir, 'packages/app/src/ui/pwa/manifest.webmanifest'),
 ).text()
 const [icon192, icon512, maskable192, maskable512, appleTouch, screenshotWide, screenshotMobile] = await Promise.all([
-  Bun.file(resolve(rootDir, 'src/ui/pwa/icons/icon-192.png')).arrayBuffer(),
-  Bun.file(resolve(rootDir, 'src/ui/pwa/icons/icon-512.png')).arrayBuffer(),
-  Bun.file(resolve(rootDir, 'src/ui/pwa/icons/maskable-192.png')).arrayBuffer(),
-  Bun.file(resolve(rootDir, 'src/ui/pwa/icons/maskable-512.png')).arrayBuffer(),
-  Bun.file(resolve(rootDir, 'src/ui/pwa/icons/apple-touch-icon.png')).arrayBuffer(),
-  Bun.file(resolve(rootDir, 'src/ui/pwa/screenshots/screenshot-wide.png')).arrayBuffer(),
-  Bun.file(resolve(rootDir, 'src/ui/pwa/screenshots/screenshot-mobile.png')).arrayBuffer(),
+  Bun.file(resolve(rootDir, 'packages/app/src/ui/pwa/icons/icon-192.png')).arrayBuffer(),
+  Bun.file(resolve(rootDir, 'packages/app/src/ui/pwa/icons/icon-512.png')).arrayBuffer(),
+  Bun.file(resolve(rootDir, 'packages/app/src/ui/pwa/icons/maskable-192.png')).arrayBuffer(),
+  Bun.file(resolve(rootDir, 'packages/app/src/ui/pwa/icons/maskable-512.png')).arrayBuffer(),
+  Bun.file(resolve(rootDir, 'packages/app/src/ui/pwa/icons/apple-touch-icon.png')).arrayBuffer(),
+  Bun.file(resolve(rootDir, 'packages/app/src/ui/pwa/screenshots/screenshot-wide.png')).arrayBuffer(),
+  Bun.file(resolve(rootDir, 'packages/app/src/ui/pwa/screenshots/screenshot-mobile.png')).arrayBuffer(),
 ])
 const icon192B64 = Buffer.from(icon192).toString('base64')
 const icon512B64 = Buffer.from(icon512).toString('base64')
@@ -52,7 +52,7 @@ const screenshotMobileB64 = Buffer.from(screenshotMobile).toString('base64')
 
 const serverOutfile = resolve(distDir, 'browsey')
 const serverResult = await Bun.build({
-  entrypoints: [resolve(rootDir, 'src/bin.ts')],
+  entrypoints: [resolve(rootDir, 'packages/cli/src/bin.ts')],
   outfile: serverOutfile,
   minify: false,
   sourcemap: 'inline',

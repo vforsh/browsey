@@ -1,10 +1,9 @@
 import { promises as fs } from 'fs'
 import { basename, extname, join, relative } from 'path'
-import { getMimeType } from './utils/mime.js'
-import { createIgnoreMatcher, type IgnoreMatcher } from './ignore.js'
-import { resolveSafePath } from './security.js'
+import { getMimeType, resolveSafePath, createIgnoreMatcher } from '@vforsh/browsey-shared'
+import type { IgnoreMatcher } from '@vforsh/browsey-shared'
 import { getGitStatus, getGitLog, getGitChanges } from './git.js'
-import type { ApiRoutesOptions, FileItem, ListResponse, SearchResult, SearchResponse, GitStatusResponse, GitLogResponse, GitChangesResponse } from './types.js'
+import type { ApiRoutesOptions, FileItem, ListResponse, SearchResult, SearchResponse, GitStatusResponse, GitLogResponse, GitChangesResponse } from '@vforsh/browsey-shared'
 
 const JSON_HEADERS = {
   'Content-Type': 'application/json',
@@ -70,6 +69,10 @@ export async function handleApiRequest(
   }
 
   const route = url.pathname.slice('/api'.length)
+
+  if (route === '/health') {
+    return jsonResponse({ ok: true })
+  }
   if (route === '/list') {
     return handleList(url, options)
   }

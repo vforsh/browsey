@@ -9,15 +9,20 @@
     "esModuleInterop": true,
     "skipLibCheck": true,
     "resolveJsonModule": true,
-    "outDir": "dist",
-    "rootDir": "src",
     "declaration": true,
     "declarationMap": true,
     "sourceMap": true,
     "forceConsistentCasingInFileNames": true,
     "noUncheckedIndexedAccess": true,
-    "noImplicitOverride": true
+    "noImplicitOverride": true,
+    "composite": true
   },
-  "include": ["src/**/*"],
+  "references": [
+    { "path": "packages/shared" },
+    { "path": "packages/api" },
+    { "path": "packages/app" },
+    { "path": "packages/cli" }
+  ],
+  "include": [],
   "exclude": ["node_modules", "dist"]
 }

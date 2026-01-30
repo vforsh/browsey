@@ -1,8 +1,7 @@
-export type ServerOptions = {
+export type ApiServerOptions = {
   root: string
   port: number
   host: string
-  open: boolean
   readonly: boolean
   showHidden: boolean
   showQR: boolean
@@ -13,6 +12,19 @@ export type ServerOptions = {
   httpsCert?: string
   httpsKey?: string
   watch: boolean
+  corsOrigin: string
+}
+
+export type AppServerOptions = {
+  port: number
+  host: string
+  apiUrl: string
+  showQR: boolean
+  version: string
+  https: boolean
+  httpsCert?: string
+  httpsKey?: string
+  open: boolean
 }
 
 export type FileItem = {
@@ -38,24 +50,26 @@ export type ApiRoutesOptions = {
 }
 
 export interface InstanceInfo {
-  pid: number           // Process ID (primary identifier)
-  port: number          // Listening port
-  host: string          // Bound host (0.0.0.0, localhost, etc.)
-  rootPath: string      // Absolute path being served
-  startedAt: string     // ISO 8601 timestamp
-  readonly: boolean     // Read-only mode flag
-  bonjour: boolean      // Bonjour advertising enabled
-  version: string       // Browsey version
+  pid: number
+  port: number
+  host: string
+  kind: 'api' | 'app'
+  rootPath: string      // For api: directory being served. For app: not used
+  apiUrl?: string       // For app: the --api URL
+  startedAt: string
+  readonly: boolean
+  bonjour: boolean
+  version: string
 }
 
 export interface RegistryFile {
-  version: 1            // Schema version for migrations
+  version: 1
   instances: InstanceInfo[]
 }
 
 export type SearchResult = {
   name: string
-  path: string           // Relative path from search root
+  path: string
   absolutePath: string
   type: 'file' | 'directory'
   score: number
@@ -99,9 +113,9 @@ export type GitLogResponse = {
 }
 
 export type GitChangeFile = {
-  path: string           // relative to repo root
-  indexStatus: string    // 'M', 'A', 'D', 'R', '?', ' '
-  workTreeStatus: string // 'M', 'D', '?', ' '
+  path: string
+  indexStatus: string
+  workTreeStatus: string
 }
 
 export type GitChangesResponse = {

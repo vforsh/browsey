@@ -1,7 +1,7 @@
 import { homedir } from 'os'
 import { join } from 'path'
 import { existsSync, mkdirSync, writeFileSync, readFileSync, unlinkSync } from 'fs'
-import type { InstanceInfo, RegistryFile } from './types.js'
+import type { InstanceInfo, RegistryFile } from '@vforsh/browsey-shared'
 
 const REGISTRY_DIR = join(homedir(), '.browsey')
 const REGISTRY_FILE = join(REGISTRY_DIR, 'instances.json')
@@ -48,11 +48,9 @@ export function writeRegistry(registry: RegistryFile): void {
   const tempFile = `${REGISTRY_FILE}.tmp`
   try {
     writeFileSync(tempFile, JSON.stringify(registry, null, 2))
-    // Rename is atomic on most systems
     const { renameSync } = require('fs')
     renameSync(tempFile, REGISTRY_FILE)
   } catch (error) {
-    // Fallback to direct write if rename fails
     try {
       unlinkSync(tempFile)
     } catch {
@@ -68,11 +66,9 @@ export function isProcessRunning(pid: number): boolean {
     return true
   } catch (error: unknown) {
     const err = error as NodeJS.ErrnoException
-    // EPERM means process exists but we don't have permission
     if (err.code === 'EPERM') {
       return true
     }
-    // ESRCH means no such process
     return false
   }
 }
@@ -84,9 +80,7 @@ function pruneStaleInstances(registry: RegistryFile): RegistryFile {
 
 export function register(info: InstanceInfo): void {
   let registry = readRegistry()
-  // Prune stale instances first
   registry = pruneStaleInstances(registry)
-  // Remove any existing entry for this PID (in case of restart)
   registry.instances = registry.instances.filter((i) => i.pid !== info.pid)
   registry.instances.push(info)
   writeRegistry(registry)
@@ -102,7 +96,6 @@ export function listInstances(): InstanceInfo[] {
   let registry = readRegistry()
   const before = registry.instances.length
   registry = pruneStaleInstances(registry)
-  // Write back if we pruned anything
   if (registry.instances.length !== before) {
     writeRegistry(registry)
   }
@@ -115,7 +108,6 @@ export type FindTarget = {
 }
 
 export function parseTarget(target: string): FindTarget {
-  // :8080 → port only
   if (target.startsWith(':')) {
     const port = parseInt(target.slice(1), 10)
     if (!isNaN(port)) {
@@ -123,13 +115,11 @@ export function parseTarget(target: string): FindTarget {
     }
   }
 
-  // Pure number → try PID first, then port
   const num = parseInt(target, 10)
   if (!isNaN(num) && target === num.toString()) {
     return { type: 'pid', value: num }
   }
 
-  // String → path substring
   return { type: 'path', value: target }
 }
 
@@ -142,14 +132,11 @@ export function findInstance(target: string): InstanceInfo | null {
   }
 
   if (parsed.type === 'pid') {
-    // Try PID first
     const byPid = instances.find((i) => i.pid === parsed.value)
     if (byPid) return byPid
-    // Fall back to port
     return instances.find((i) => i.port === parsed.value) ?? null
   }
 
-  // Path substring match (case-insensitive)
   const searchStr = (parsed.value as string).toLowerCase()
   return instances.find((i) => i.rootPath.toLowerCase().includes(searchStr)) ?? null
 }
@@ -163,14 +150,11 @@ export function findAllMatchingInstances(target: string): InstanceInfo[] {
   }
 
   if (parsed.type === 'pid') {
-    // Try PID first
     const byPid = instances.filter((i) => i.pid === parsed.value)
     if (byPid.length > 0) return byPid
-    // Fall back to port
     return instances.filter((i) => i.port === parsed.value)
   }
 
-  // Path substring match (case-insensitive)
   const searchStr = (parsed.value as string).toLowerCase()
   return instances.filter((i) => i.rootPath.toLowerCase().includes(searchStr))
 }
@@ -179,11 +163,9 @@ export function stopInstance(pid: number, force: boolean = false): boolean {
   const signal = force ? 'SIGKILL' : 'SIGTERM'
   try {
     process.kill(pid, signal)
-    // Give it a moment, then deregister
     deregister(pid)
     return true
   } catch {
-    // Process may already be dead
     deregister(pid)
     return false
   }

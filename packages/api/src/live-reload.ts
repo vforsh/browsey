@@ -13,9 +13,6 @@ let clients: LiveReloadClient[] = []
 let clientIdCounter = 0
 let watcher: FSWatcher | null = null
 
-/**
- * Create an SSE response for live reload
- */
 export function createReloadSSEResponse(): Response {
   const clientId = ++clientIdCounter
 
@@ -42,9 +39,6 @@ export function createReloadSSEResponse(): Response {
   })
 }
 
-/**
- * Broadcast reload event to all connected clients
- */
 export function broadcastReload(eventType: ReloadEventType = 'reload'): void {
   const message = `event: ${eventType}\ndata: {"time":${Date.now()}}\n\n`
 
@@ -57,14 +51,13 @@ export function broadcastReload(eventType: ReloadEventType = 'reload'): void {
   }
 }
 
-/**
- * Start watching UI files for changes
- */
 export function startWatcher(): void {
   if (watcher) return
 
+  // In dev mode, watch the app package UI directory
   const __dirname = dirname(fileURLToPath(import.meta.url))
-  const uiDir = join(__dirname, 'ui')
+  // Navigate up from packages/api/src to root, then into packages/app/src/ui
+  const uiDir = join(__dirname, '..', '..', 'app', 'src', 'ui')
 
   let debounceTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -90,9 +83,6 @@ export function startWatcher(): void {
   console.log('  \x1b[2mWatch:\x1b[0m   Live reload enabled')
 }
 
-/**
- * Stop the file watcher
- */
 export function stopWatcher(): void {
   if (watcher) {
     watcher.close()
@@ -110,9 +100,6 @@ export function stopWatcher(): void {
   clients = []
 }
 
-/**
- * Get number of connected clients
- */
 export function getClientCount(): number {
   return clients.length
 }

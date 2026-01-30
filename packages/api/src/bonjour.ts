@@ -4,10 +4,6 @@ import { hostname, networkInterfaces } from 'os'
 let bonjourInstance: Bonjour | null = null
 let publishedService: Service | null = null
 
-/**
- * Get the primary network interface IP address.
- * On macOS, prefers en0 (Wi-Fi/Ethernet). Falls back to first non-internal IPv4.
- */
 function getPrimaryInterface(): string | undefined {
   const nets = networkInterfaces()
 
@@ -32,18 +28,13 @@ function getPrimaryInterface(): string | undefined {
 export function advertiseService(port: number, rootPath: string): () => void {
   const iface = getPrimaryInterface()
 
-  // Specify interface to avoid multicast on all interfaces (which can break networking)
-  // Also provide error callback to prevent unhandled errors from crashing
-  // Note: 'interface' option is passed to multicast-dns but not in bonjour-service types
   bonjourInstance = new Bonjour(
     iface ? { interface: iface } as unknown as Partial<ServiceConfig> : undefined,
     (err: Error) => {
-      // Log but don't crash - Bonjour is optional functionality
       console.warn('[bonjour] mDNS error:', err.message)
     }
   )
 
-  // Add port to make service name unique per instance
   const serviceName = `Browsey on ${hostname()} (${port})`
 
   publishedService = bonjourInstance.publish({
@@ -54,7 +45,7 @@ export function advertiseService(port: number, rootPath: string): () => void {
       version: '1.0',
       path: rootPath,
     },
-    probe: false, // Skip probing to avoid conflicts with stale entries
+    probe: false,
   })
 
   return () => {

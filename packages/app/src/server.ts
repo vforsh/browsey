@@ -1,13 +1,9 @@
 import { networkInterfaces, platform } from 'os'
-import { resolve, dirname, join } from 'path'
+import { dirname, join } from 'path'
 import { existsSync } from 'fs'
 import { fileURLToPath } from 'url'
 import qrcode from 'qrcode-terminal'
-import { handleApiRequest } from './routes.js'
-import { advertiseService } from './bonjour.js'
-import { register, deregister } from './registry.js'
-import { createReloadSSEResponse, startWatcher, stopWatcher } from './live-reload.js'
-import type { ServerOptions } from './types.js'
+import type { AppServerOptions, InstanceInfo } from '@vforsh/browsey-shared'
 
 // UI bundle will be injected by build script
 declare const UI_HTML: string
@@ -24,12 +20,11 @@ declare const UI_SCREENSHOT_MOBILE_B64: string
 
 // Dev mode: load UI files from disk if constants aren't defined
 async function getUIContent(): Promise<{ html: string; css: string; js: string }> {
-  // Check if we're in production (constants injected by build)
   if (typeof UI_HTML !== 'undefined') {
     return { html: UI_HTML, css: UI_CSS, js: UI_JS }
   }
 
-  // Dev mode: load from src/ui directory
+  // Dev mode: load from packages/app/src/ui directory
   const __dirname = dirname(fileURLToPath(import.meta.url))
   const uiDir = join(__dirname, 'ui')
 
@@ -120,15 +115,16 @@ async function getPwaAssets(): Promise<PwaAssets> {
   }
 }
 
-export async function startServer(options: ServerOptions): Promise<void> {
-  const rootPath = resolve(options.root)
-  const listenHost = normalizeHost(options.host)
+export type AppServerCallbacks = {
+  register: (info: InstanceInfo) => void
+  deregister: (pid: number) => void
+}
 
-  // Validate root path exists
-  if (!existsSync(rootPath)) {
-    console.error(`Error: Directory does not exist: ${rootPath}`)
-    process.exit(1)
-  }
+export async function startAppServer(
+  options: AppServerOptions,
+  callbacks: AppServerCallbacks
+): Promise<void> {
+  const listenHost = normalizeHost(options.host)
 
   if (options.https && (!options.httpsCert || !options.httpsKey)) {
     console.error('Error: HTTPS requires both cert and key paths')
@@ -157,43 +153,12 @@ export async function startServer(options: ServerOptions): Promise<void> {
   const ui = await getUIContent()
   const pwa = await getPwaAssets()
 
-  // Inject live reload script if watch mode is enabled
-  const liveReloadScript = `<script>
-(function() {
-  const es = new EventSource('/api/reload');
-  es.addEventListener('reload', function() {
-    console.log('[live-reload] Reloading...');
-    location.reload();
-  });
-  es.addEventListener('css', function() {
-    console.log('[live-reload] Reloading CSS...');
-    const links = document.querySelectorAll('link[rel="stylesheet"]');
-    links.forEach(function(link) {
-      const href = link.href.split('?')[0];
-      link.href = href + '?t=' + Date.now();
-    });
-  });
-  es.onerror = function() {
-    console.log('[live-reload] Connection lost, reconnecting...');
-  };
-})();
-</script>`
-
-  const htmlWithReload = options.watch
-    ? ui.html.replace('</body>', liveReloadScript + '</body>')
-    : ui.html
-
-  const apiOptions = {
-    root: rootPath,
-    readonly: options.readonly,
-    showHidden: options.showHidden,
-    ignorePatterns: options.ignorePatterns,
-  }
-
-  // Start file watcher if enabled
-  if (options.watch) {
-    startWatcher()
-  }
+  // Inject the API base URL into HTML
+  const apiBaseUrl = options.apiUrl.replace(/\/$/, '')
+  const htmlWithApi = ui.html.replace(
+    'window.__BROWSEY_API_BASE__ = ""',
+    `window.__BROWSEY_API_BASE__ = ${JSON.stringify(apiBaseUrl)}`
+  )
 
   const server = Bun.serve({
     port: options.port,
@@ -202,13 +167,8 @@ export async function startServer(options: ServerOptions): Promise<void> {
     fetch: async (req) => {
       const url = new URL(req.url)
 
-      // SSE endpoint for live reload
-      if (url.pathname === '/api/reload') {
-        return createReloadSSEResponse()
-      }
-
       if (url.pathname === '/') {
-        return new Response(htmlWithReload, { headers: { 'Content-Type': 'text/html' } })
+        return new Response(htmlWithApi, { headers: { 'Content-Type': 'text/html' } })
       }
       if (url.pathname === '/styles.css') {
         return new Response(ui.css, { headers: { 'Content-Type': 'text/css' } })
@@ -236,12 +196,8 @@ export async function startServer(options: ServerOptions): Promise<void> {
         }
       }
 
-      const apiResponse = await handleApiRequest(req, apiOptions)
-      if (apiResponse) {
-        return apiResponse
-      }
-
-      return new Response(htmlWithReload, { headers: { 'Content-Type': 'text/html' } })
+      // SPA fallback
+      return new Response(htmlWithApi, { headers: { 'Content-Type': 'text/html' } })
     },
   })
 
@@ -249,15 +205,14 @@ export async function startServer(options: ServerOptions): Promise<void> {
   const networkUrl = getNetworkUrl(listenHost, options.port, options.https)
 
   console.log()
-  console.log('  \x1b[1mBrowsey\x1b[0m is running!')
+  console.log('  \x1b[1mBrowsey App\x1b[0m is running!')
   console.log()
   console.log(`  \x1b[2mLocal:\x1b[0m   ${localUrl}`)
   if (networkUrl) {
     console.log(`  \x1b[2mNetwork:\x1b[0m ${networkUrl}`)
   }
   console.log()
-  console.log(`  \x1b[2mServing:\x1b[0m ${rootPath}`)
-  console.log(`  \x1b[2mMode:\x1b[0m    ${options.readonly ? 'read-only' : 'read-write'}`)
+  console.log(`  \x1b[2mAPI:\x1b[0m     ${apiBaseUrl}`)
   console.log()
 
   if (options.showQR && networkUrl) {
@@ -267,31 +222,20 @@ export async function startServer(options: ServerOptions): Promise<void> {
     console.log()
   }
 
-  // Start Bonjour advertising for iOS app discovery
-  let stopBonjour: (() => void) | null = null
-  if (options.bonjour) {
-    try {
-      stopBonjour = advertiseService(options.port, rootPath)
-      console.log('  \x1b[2mBonjour:\x1b[0m  Advertising as _browsey._tcp')
-      console.log()
-    } catch {
-      console.log('  \x1b[33mWarning:\x1b[0m  Could not start Bonjour advertising')
-      console.log()
-    }
-  }
-
   console.log('  \x1b[2mPress Ctrl+C to stop\x1b[0m')
   console.log()
 
   // Register this instance
-  register({
+  callbacks.register({
     pid: process.pid,
     port: options.port,
     host: options.host,
-    rootPath,
+    kind: 'app',
+    rootPath: '',
+    apiUrl: apiBaseUrl,
     startedAt: new Date().toISOString(),
-    readonly: options.readonly,
-    bonjour: options.bonjour,
+    readonly: true,
+    bonjour: false,
     version: options.version,
   })
 
@@ -301,13 +245,7 @@ export async function startServer(options: ServerOptions): Promise<void> {
 
   const shutdown = () => {
     console.log('\n  Shutting down...')
-    deregister(process.pid)
-    if (stopBonjour) {
-      stopBonjour()
-    }
-    if (options.watch) {
-      stopWatcher()
-    }
+    callbacks.deregister(process.pid)
     server.stop()
     process.exit(0)
   }
@@ -318,7 +256,6 @@ export async function startServer(options: ServerOptions): Promise<void> {
 
 function normalizeHost(host: string): string {
   if (host === '0.0.0.0') {
-    // Use dual-stack so localhost IPv6 still reaches the server.
     return '::'
   }
   return host

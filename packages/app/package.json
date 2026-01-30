@@ -1,0 +1,16 @@
+{
+  "name": "@vforsh/browsey-app",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "dependencies": {
+    "@vforsh/browsey-shared": "workspace:*",
+    "highlight.js": "^11.11.1",
+    "lucide-static": "^0.562.0",
+    "marked": "^17.0.1",
+    "marked-highlight": "^2.2.3",
+    "qrcode-terminal": "^0.12.0"
+  }
+}

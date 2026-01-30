@@ -4,21 +4,50 @@
   "workspaces": {
     "": {
       "name": "@vforsh/browsey",
+      "devDependencies": {
+        "@types/bun": "latest",
+        "@types/qrcode-terminal": "^0.12.2",
+        "typescript": "^5.7.0",
+      },
+    },
+    "packages/api": {
+      "name": "@vforsh/browsey-api",
+      "version": "0.1.0",
       "dependencies": {
+        "@vforsh/browsey-shared": "workspace:*",
         "bonjour-service": "^1.3.0",
-        "commander": "^14.0.0",
-        "get-port": "^7.1.0",
+        "qrcode-terminal": "^0.12.0",
+      },
+    },
+    "packages/app": {
+      "name": "@vforsh/browsey-app",
+      "version": "0.1.0",
+      "dependencies": {
+        "@vforsh/browsey-shared": "workspace:*",
         "highlight.js": "^11.11.1",
         "lucide-static": "^0.562.0",
         "marked": "^17.0.1",
         "marked-highlight": "^2.2.3",
         "qrcode-terminal": "^0.12.0",
       },
-      "devDependencies": {
-        "@types/bun": "latest",
-        "@types/qrcode-terminal": "^0.12.2",
-        "typescript": "^5.7.0",
+    },
+    "packages/cli": {
+      "name": "@vforsh/browsey-cli",
+      "version": "0.1.0",
+      "bin": {
+        "browsey": "../../dist/browsey",
       },
+      "dependencies": {
+        "@vforsh/browsey-api": "workspace:*",
+        "@vforsh/browsey-app": "workspace:*",
+        "@vforsh/browsey-shared": "workspace:*",
+        "commander": "^14.0.0",
+        "get-port": "^7.1.0",
+      },
+    },
+    "packages/shared": {
+      "name": "@vforsh/browsey-shared",
+      "version": "0.1.0",
     },
   },
   "packages": {
@@ -29,6 +58,14 @@
     "@types/node": ["@types/node@22.19.7", "", { "dependencies": { "undici-types": "~6.21.0" } }, "sha512-MciR4AKGHWl7xwxkBa6xUGxQJ4VBOmPTF7sL+iGzuahOFaO0jHCsuEfS80pan1ef4gWId1oWOweIhrDEYLuaOw=="],
 
     "@types/qrcode-terminal": ["@types/qrcode-terminal@0.12.2", "", {}, "sha512-v+RcIEJ+Uhd6ygSQ0u5YYY7ZM+la7GgPbs0V/7l/kFs2uO4S8BcIUEMoP7za4DNIqNnUD5npf0A/7kBhrCKG5Q=="],
+
+    "@vforsh/browsey-api": ["@vforsh/browsey-api@workspace:packages/api"],
+
+    "@vforsh/browsey-app": ["@vforsh/browsey-app@workspace:packages/app"],
+
+    "@vforsh/browsey-cli": ["@vforsh/browsey-cli@workspace:packages/cli"],
+
+    "@vforsh/browsey-shared": ["@vforsh/browsey-shared@workspace:packages/shared"],
 
     "bonjour-service": ["bonjour-service@1.3.0", "", { "dependencies": { "fast-deep-equal": "^3.1.3", "multicast-dns": "^7.2.5" } }, "sha512-3YuAUiSkWykd+2Azjgyxei8OWf8thdn8AITIog2M4UICzoqfjlqr64WIjEXZllf/W6vK1goqleSR6brGomxQqA=="],
 

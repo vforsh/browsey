@@ -1,0 +1,18 @@
+{
+  "name": "@vforsh/browsey-cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "browsey": "../../dist/browsey"
+  },
+  "main": "./src/bin.ts",
+  "types": "./src/bin.ts",
+  "dependencies": {
+    "@vforsh/browsey-shared": "workspace:*",
+    "@vforsh/browsey-api": "workspace:*",
+    "@vforsh/browsey-app": "workspace:*",
+    "commander": "^14.0.0",
+    "get-port": "^7.1.0"
+  }
+}

@@ -1,7 +1,5 @@
 import { spawn } from 'child_process'
-import { access, constants } from 'fs/promises'
-import { join, dirname } from 'path'
-import type { GitChangeFile, GitChangesResponse } from './types.js'
+import type { GitChangeFile, GitChangesResponse } from '@vforsh/browsey-shared'
 
 export type GitStatus = {
   isRepo: boolean
@@ -48,26 +46,16 @@ async function runGitCommand(cwd: string, args: string[]): Promise<string | null
   })
 }
 
-/**
- * Find the git repository root for a given path.
- * Returns null if the path is not inside a git repository.
- */
 export async function findGitRoot(path: string): Promise<string | null> {
   const result = await runGitCommand(path, ['rev-parse', '--show-toplevel'])
   return result
 }
 
-/**
- * Check if a path is inside a git repository.
- */
 export async function isGitRepo(path: string): Promise<boolean> {
   const root = await findGitRoot(path)
   return root !== null
 }
 
-/**
- * Get comprehensive git status for a directory.
- */
 export type CommitInfo = {
   hash: string
   shortHash: string
@@ -81,9 +69,6 @@ export type GitLogResult = {
   hasMore: boolean
 }
 
-/**
- * Get git commit log for a directory.
- */
 export async function getGitLog(
   path: string,
   limit: number = 25,
@@ -133,9 +118,6 @@ export async function getGitLog(
   return { commits, hasMore }
 }
 
-/**
- * Get comprehensive git status for a directory.
- */
 export async function getGitStatus(path: string): Promise<GitStatus> {
   const repoRoot = await findGitRoot(path)
 
@@ -220,10 +202,6 @@ export async function getGitStatus(path: string): Promise<GitStatus> {
   }
 }
 
-/**
- * Get detailed git changes (file-level) for a directory.
- * Parses `git status --porcelain` into staged, unstaged, and untracked file lists.
- */
 export async function getGitChanges(path: string): Promise<GitChangesResponse> {
   const repoRoot = await findGitRoot(path)
 

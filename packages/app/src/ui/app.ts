@@ -16,6 +16,18 @@ import hljs from 'highlight.js'
 import { marked } from 'marked'
 import { markedHighlight } from 'marked-highlight'
 
+declare global {
+  interface Window {
+    __BROWSEY_API_BASE__: string
+  }
+}
+
+/** Prepend the API base URL (set by the app server) to an API path */
+function apiUrl(path: string): string {
+  const base = window.__BROWSEY_API_BASE__ || ''
+  return base + path
+}
+
 type FileItem = {
   name: string
   type: 'file' | 'directory'
@@ -412,7 +424,7 @@ class FileViewer {
     this.hideAllControlButtons()
 
     try {
-      const response = await fetch(`/api/view?path=${encodeURIComponent(path)}`)
+      const response = await fetch(apiUrl(`/api/view?path=${encodeURIComponent(path)}`))
       if (!response.ok) {
         const error = await response.json()
         throw new Error(error.error || 'Failed to load file')
@@ -461,9 +473,10 @@ class FileViewer {
 
   private renderImage(url: string, filename: string): void {
     this.currentContentType = 'image'
+    const imgSrc = apiUrl(url)
     this.content.innerHTML = `
       <div class="viewer-image">
-        <img src="${url}" alt="${this.escapeHtml(filename)}" />
+        <img src="${imgSrc}" alt="${this.escapeHtml(filename)}" />
       </div>
     `
     const image = this.content.querySelector('img')
@@ -509,7 +522,7 @@ class FileViewer {
   private download(): void {
     if (!this.currentPath) return
     const a = document.createElement('a')
-    a.href = `/api/file?path=${encodeURIComponent(this.currentPath)}`
+    a.href = apiUrl(`/api/file?path=${encodeURIComponent(this.currentPath)}`)
     a.download = this.currentPath.split('/').pop() || 'download'
     document.body.appendChild(a)
     a.click()
@@ -565,7 +578,7 @@ class InfoModal {
     this.content.innerHTML = '<div class="info-loading">Loading...</div>'
 
     try {
-      const response = await fetch(`/api/stat?path=${encodeURIComponent(path)}`)
+      const response = await fetch(apiUrl(`/api/stat?path=${encodeURIComponent(path)}`))
       if (!response.ok) {
         const error = await response.json()
         throw new Error(error.error || 'Failed to load info')
@@ -756,7 +769,7 @@ class SearchOverlay {
 
     try {
       const response = await fetch(
-        `/api/search?path=${encodeURIComponent(this.searchPath)}&q=${encodeURIComponent(query)}&limit=50`
+        apiUrl(`/api/search?path=${encodeURIComponent(this.searchPath)}&q=${encodeURIComponent(query)}&limit=50`)
       )
 
       if (!response.ok) {
@@ -974,7 +987,7 @@ class GitHistoryOverlay {
 
     try {
       const skip = this.commits.length
-      const response = await fetch(`/api/git/log?path=${encodeURIComponent(this.currentPath)}&limit=25&skip=${skip}`)
+      const response = await fetch(apiUrl(`/api/git/log?path=${encodeURIComponent(this.currentPath)}&limit=25&skip=${skip}`))
 
       if (!response.ok) {
         throw new Error('Failed to load commits')
@@ -1118,7 +1131,7 @@ class GitChangesOverlay {
     this.content.innerHTML = '<div class="git-changes-loading">Loading changes...</div>'
 
     try {
-      const response = await fetch(`/api/git/changes?path=${encodeURIComponent(path)}`)
+      const response = await fetch(apiUrl(`/api/git/changes?path=${encodeURIComponent(path)}`))
       if (!response.ok) {
         throw new Error('Failed to load changes')
       }
@@ -1373,7 +1386,7 @@ class GitStatusBar {
   async update(path: string): Promise<void> {
     this.currentPath = path
     try {
-      const response = await fetch(`/api/git?path=${encodeURIComponent(path)}`)
+      const response = await fetch(apiUrl(`/api/git?path=${encodeURIComponent(path)}`))
       if (!response.ok) {
         this.hide()
         return
@@ -1705,7 +1718,7 @@ class FileBrowser {
     this.showLoading()
 
     try {
-      const response = await fetch(`/api/list?path=${encodeURIComponent(path)}`)
+      const response = await fetch(apiUrl(`/api/list?path=${encodeURIComponent(path)}`))
       if (!response.ok) {
         const error = await response.json()
         throw new Error(error.error || 'Failed to load directory')
@@ -1908,7 +1921,7 @@ class FileBrowser {
 
   private downloadFile(path: string): void {
     const a = document.createElement('a')
-    a.href = `/api/file?path=${encodeURIComponent(path)}`
+    a.href = apiUrl(`/api/file?path=${encodeURIComponent(path)}`)
     a.download = path.split('/').pop() || 'download'
     document.body.appendChild(a)
     a.click()

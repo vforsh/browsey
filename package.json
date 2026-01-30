@@ -1,33 +1,12 @@
 {
-  "name": "@vforsh/browsey",
-  "version": "0.1.0",
-  "description": "Mobile-friendly web file browser CLI",
-  "type": "module",
-  "bin": {
-    "browsey": "dist/browsey"
-  },
-  "main": "./dist/browsey",
-  "files": [
-    "dist"
-  ],
-  "publishConfig": {
-    "access": "public"
-  },
+  "name": "browsey",
+  "private": true,
+  "workspaces": ["packages/*"],
   "scripts": {
     "build": "bun run scripts/build.ts",
-    "dev": "bun --watch src/bin.ts --no-bonjour",
-    "typecheck": "tsc --noEmit",
-    "prepublishOnly": "npm run build"
-  },
-  "dependencies": {
-    "bonjour-service": "^1.3.0",
-    "commander": "^14.0.0",
-    "get-port": "^7.1.0",
-    "highlight.js": "^11.11.1",
-    "lucide-static": "^0.562.0",
-    "marked": "^17.0.1",
-    "marked-highlight": "^2.2.3",
-    "qrcode-terminal": "^0.12.0"
+    "dev:api": "bun --watch packages/cli/src/bin.ts api --no-bonjour",
+    "dev:app": "bun --watch packages/cli/src/bin.ts app --api http://localhost:4200",
+    "typecheck": "tsc --build"
   },
   "devDependencies": {
     "@types/qrcode-terminal": "^0.12.2",
@@ -42,11 +21,5 @@
     "url": "git+https://github.com/vforsh/browsey.git"
   },
   "author": "vforsh",
-  "license": "MIT",
-  "keywords": [
-    "file-browser",
-    "file-server",
-    "mobile",
-    "cli"
-  ]
+  "license": "MIT"
 }
