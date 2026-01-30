@@ -6,6 +6,7 @@ import qrcode from 'qrcode-terminal'
 import { handleApiRequest } from './routes.js'
 import { advertiseService } from './bonjour.js'
 import { register, deregister } from './registry.js'
+import { createReloadSSEResponse, startWatcher, stopWatcher } from './live-reload.js'
 import type { ServerOptions } from './types.js'
 
 // UI bundle will be injected by build script
@@ -156,11 +157,42 @@ export async function startServer(options: ServerOptions): Promise<void> {
   const ui = await getUIContent()
   const pwa = await getPwaAssets()
 
+  // Inject live reload script if watch mode is enabled
+  const liveReloadScript = `<script>
+(function() {
+  const es = new EventSource('/api/reload');
+  es.addEventListener('reload', function() {
+    console.log('[live-reload] Reloading...');
+    location.reload();
+  });
+  es.addEventListener('css', function() {
+    console.log('[live-reload] Reloading CSS...');
+    const links = document.querySelectorAll('link[rel="stylesheet"]');
+    links.forEach(function(link) {
+      const href = link.href.split('?')[0];
+      link.href = href + '?t=' + Date.now();
+    });
+  });
+  es.onerror = function() {
+    console.log('[live-reload] Connection lost, reconnecting...');
+  };
+})();
+</script>`
+
+  const htmlWithReload = options.watch
+    ? ui.html.replace('</body>', liveReloadScript + '</body>')
+    : ui.html
+
   const apiOptions = {
     root: rootPath,
     readonly: options.readonly,
     showHidden: options.showHidden,
     ignorePatterns: options.ignorePatterns,
+  }
+
+  // Start file watcher if enabled
+  if (options.watch) {
+    startWatcher()
   }
 
   const server = Bun.serve({
@@ -170,8 +202,13 @@ export async function startServer(options: ServerOptions): Promise<void> {
     fetch: async (req) => {
       const url = new URL(req.url)
 
+      // SSE endpoint for live reload
+      if (url.pathname === '/api/reload') {
+        return createReloadSSEResponse()
+      }
+
       if (url.pathname === '/') {
-        return new Response(ui.html, { headers: { 'Content-Type': 'text/html' } })
+        return new Response(htmlWithReload, { headers: { 'Content-Type': 'text/html' } })
       }
       if (url.pathname === '/styles.css') {
         return new Response(ui.css, { headers: { 'Content-Type': 'text/css' } })
@@ -204,7 +241,7 @@ export async function startServer(options: ServerOptions): Promise<void> {
         return apiResponse
       }
 
-      return new Response(ui.html, { headers: { 'Content-Type': 'text/html' } })
+      return new Response(htmlWithReload, { headers: { 'Content-Type': 'text/html' } })
     },
   })
 
@@ -267,6 +304,9 @@ export async function startServer(options: ServerOptions): Promise<void> {
     deregister(process.pid)
     if (stopBonjour) {
       stopBonjour()
+    }
+    if (options.watch) {
+      stopWatcher()
     }
     server.stop()
     process.exit(0)

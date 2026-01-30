@@ -12,6 +12,7 @@ export type ServerOptions = {
   https: boolean
   httpsCert?: string
   httpsKey?: string
+  watch: boolean
 }
 
 export type FileItem = {
@@ -82,4 +83,17 @@ export type GitStatusResponse = {
   } | null
   remoteUrl: string | null
   repoRoot: string | null
+}
+
+export type CommitInfo = {
+  hash: string
+  shortHash: string
+  author: string
+  date: string
+  message: string
+}
+
+export type GitLogResponse = {
+  commits: CommitInfo[]
+  hasMore: boolean
 }

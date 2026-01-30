@@ -22,33 +22,47 @@
       </svg>
     </button>
     <div class="path-display" id="path-display">/</div>
-    <button class="btn-icon" id="btn-search" aria-label="Search files">
-      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <circle cx="11" cy="11" r="8"/>
-        <path d="m21 21-4.35-4.35"/>
-      </svg>
-    </button>
-    <button class="btn-icon" id="btn-refresh" aria-label="Refresh">
-      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M23 4v6h-6"/><path d="M1 20v-6h6"/>
-        <path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/>
-      </svg>
-    </button>
+    <div class="file-actions">
+      <button class="btn-file-action" id="btn-search" aria-label="Search files">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="11" cy="11" r="8"/>
+          <path d="m21 21-4.35-4.35"/>
+        </svg>
+      </button>
+      <button class="btn-file-action" id="btn-refresh" aria-label="Refresh">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M23 4v6h-6"/><path d="M1 20v-6h6"/>
+          <path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/>
+        </svg>
+      </button>
+    </div>
   </header>
 
   <!-- Git Status Bar -->
   <div class="git-status-bar" id="git-status-bar" hidden>
+    <span class="git-icon"></span>
     <div class="git-status-content">
-      <span class="git-branch" id="git-branch"></span>
-      <span class="git-state" id="git-state"></span>
+      <div class="git-status-primary">
+        <span class="git-branch" id="git-branch"></span>
+        <span class="git-state" id="git-state"></span>
+      </div>
+      <div class="git-status-secondary" id="git-last-commit"></div>
     </div>
-    <button class="btn-icon git-info-btn" id="git-info-btn" aria-label="Git info">
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <circle cx="12" cy="12" r="10"/>
-        <path d="M12 16v-4"/>
-        <path d="M12 8h.01"/>
-      </svg>
-    </button>
+    <div class="file-actions">
+      <button class="btn-file-action info git-info-btn" id="git-info-btn" aria-label="Git info">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="10"/>
+          <path d="M12 16v-4"/>
+          <path d="M12 8h.01"/>
+        </svg>
+      </button>
+      <button class="btn-file-action git-history-btn" id="git-history-btn" aria-label="Commit history">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="10"/>
+          <polyline points="12 6 12 12 16 14"/>
+        </svg>
+      </button>
+    </div>
   </div>
 
   <!-- Git Info Modal -->
@@ -164,6 +178,22 @@
         <span class="search-shortcut"><kbd>Enter</kbd> to select</span>
         <span class="search-shortcut"><kbd>Esc</kbd> to close</span>
       </div>
+    </div>
+  </div>
+
+  <!-- Git History Overlay -->
+  <div class="git-history-overlay" id="git-history-overlay" hidden>
+    <div class="git-history-modal">
+      <div class="git-history-header">
+        <div class="git-history-title">Commit History</div>
+        <button class="btn-icon" id="git-history-close" aria-label="Close">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18"/>
+            <line x1="6" y1="6" x2="18" y2="18"/>
+          </svg>
+        </button>
+      </div>
+      <div class="git-history-list" id="git-history-list"></div>
     </div>
   </div>
 

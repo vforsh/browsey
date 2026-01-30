@@ -324,10 +324,10 @@ class FileViewer {
     const isText = this.currentContentType === 'text'
 
     // Image navigation: show only for images with nav context
-    const hasImageNav = this.imageNav !== null
-    this.prevBtn.hidden = !(isImage && hasImageNav)
-    this.nextBtn.hidden = !(isImage && hasImageNav)
-    if (isImage && hasImageNav) {
+    const hasImageNav = isImage && this.imageNav !== null
+    this.prevBtn.hidden = !hasImageNav
+    this.nextBtn.hidden = !hasImageNav
+    if (hasImageNav) {
       this.prevBtn.disabled = this.imageNav!.index <= 0
       this.nextBtn.disabled = this.imageNav!.index >= this.imageNav!.paths.length - 1
     }
@@ -883,30 +883,190 @@ class SearchOverlay {
   }
 }
 
+type CommitInfo = {
+  hash: string
+  shortHash: string
+  author: string
+  date: string
+  message: string
+}
+
+type GitLogResponse = {
+  commits: CommitInfo[]
+  hasMore: boolean
+}
+
+class GitHistoryOverlay {
+  private overlay: HTMLElement
+  private list: HTMLElement
+  private closeBtn: HTMLElement
+  private currentPath: string = '/'
+  private commits: CommitInfo[] = []
+  private isLoading = false
+  private hasMore = true
+  private onCopyHash?: (hash: string) => void
+
+  constructor(onCopyHash?: (hash: string) => void) {
+    this.onCopyHash = onCopyHash
+    this.overlay = document.getElementById('git-history-overlay')!
+    this.list = document.getElementById('git-history-list')!
+    this.closeBtn = document.getElementById('git-history-close')!
+
+    this.setupEventListeners()
+  }
+
+  private setupEventListeners(): void {
+    this.closeBtn.addEventListener('click', () => this.close())
+    this.overlay.addEventListener('click', (e) => {
+      if (e.target === this.overlay) this.close()
+    })
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && !this.overlay.hidden) {
+        this.close()
+      }
+    })
+
+    // Copy hash on click
+    this.list.addEventListener('click', (e) => {
+      const hashBtn = (e.target as HTMLElement).closest('.git-history-hash')
+      if (hashBtn) {
+        const hash = hashBtn.getAttribute('data-hash')
+        if (hash) this.onCopyHash?.(hash)
+      }
+    })
+
+    // Infinite scroll
+    this.list.addEventListener('scroll', () => {
+      if (this.isLoading || !this.hasMore) return
+      const { scrollTop, scrollHeight, clientHeight } = this.list
+      if (scrollHeight - scrollTop - clientHeight < 100) {
+        this.loadMore()
+      }
+    })
+  }
+
+  async open(path: string): Promise<void> {
+    this.currentPath = path
+    this.commits = []
+    this.hasMore = true
+    this.overlay.hidden = false
+    this.list.innerHTML = '<div class="git-history-loading">Loading commits...</div>'
+
+    await this.loadMore()
+  }
+
+  close(): void {
+    this.overlay.hidden = true
+    this.commits = []
+    this.hasMore = true
+    this.isLoading = false
+  }
+
+  private async loadMore(): Promise<void> {
+    if (this.isLoading || !this.hasMore) return
+    this.isLoading = true
+
+    // Show loading indicator if we already have commits
+    if (this.commits.length > 0) {
+      this.list.insertAdjacentHTML('beforeend', '<div class="git-history-loading-more" id="git-history-loading-more">Loading more...</div>')
+    }
+
+    try {
+      const skip = this.commits.length
+      const response = await fetch(`/api/git/log?path=${encodeURIComponent(this.currentPath)}&limit=25&skip=${skip}`)
+
+      if (!response.ok) {
+        throw new Error('Failed to load commits')
+      }
+
+      const data: GitLogResponse = await response.json()
+      this.commits.push(...data.commits)
+      this.hasMore = data.hasMore
+
+      this.render()
+    } catch (error) {
+      if (this.commits.length === 0) {
+        this.list.innerHTML = `<div class="git-history-error">${error instanceof Error ? error.message : 'Failed to load commits'}</div>`
+      } else {
+        // Remove loading indicator on error
+        document.getElementById('git-history-loading-more')?.remove()
+      }
+    } finally {
+      this.isLoading = false
+    }
+  }
+
+  private render(): void {
+    if (this.commits.length === 0) {
+      this.list.innerHTML = '<div class="git-history-empty">No commits found</div>'
+      return
+    }
+
+    const html = this.commits.map((commit) => {
+      const date = new Date(commit.date)
+      const formattedDate = date.toLocaleString(undefined, {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+      })
+
+      return `
+        <div class="git-history-item">
+          <div class="git-history-message">${this.escapeHtml(commit.message)}</div>
+          <div class="git-history-meta">
+            <button class="git-history-hash" data-hash="${this.escapeHtml(commit.hash)}">${this.escapeHtml(commit.shortHash)}</button>
+            <span class="git-history-author">${this.escapeHtml(commit.author)}</span>
+            <span class="git-history-date">${formattedDate}</span>
+          </div>
+        </div>
+      `
+    }).join('')
+
+    this.list.innerHTML = html
+  }
+
+  private escapeHtml(text: string): string {
+    const div = document.createElement('div')
+    div.textContent = text
+    return div.innerHTML
+  }
+}
+
 class GitStatusBar {
   private statusBar: HTMLElement
   private branchEl: HTMLElement
   private stateEl: HTMLElement
+  private lastCommitEl: HTMLElement
   private infoBtn: HTMLElement
+  private historyBtn: HTMLElement
   private modalOverlay: HTMLElement
   private modalContent: HTMLElement
   private modalCloseBtn: HTMLElement
   private currentStatus: GitStatusResponse | null = null
+  private currentPath: string = '/'
+  private onOpenHistory?: (path: string) => void
 
-  constructor() {
+  constructor(onOpenHistory?: (path: string) => void) {
     this.statusBar = document.getElementById('git-status-bar')!
     this.branchEl = document.getElementById('git-branch')!
     this.stateEl = document.getElementById('git-state')!
+    this.lastCommitEl = document.getElementById('git-last-commit')!
     this.infoBtn = document.getElementById('git-info-btn')!
+    this.historyBtn = document.getElementById('git-history-btn')!
     this.modalOverlay = document.getElementById('git-modal-overlay')!
     this.modalContent = document.getElementById('git-modal-content')!
     this.modalCloseBtn = document.getElementById('git-modal-close')!
+    this.onOpenHistory = onOpenHistory
 
     this.setupEventListeners()
   }
 
   private setupEventListeners(): void {
     this.infoBtn.addEventListener('click', () => this.openModal())
+    this.historyBtn.addEventListener('click', () => this.openHistory())
     this.modalCloseBtn.addEventListener('click', () => this.closeModal())
     this.modalOverlay.addEventListener('click', (e) => {
       if (e.target === this.modalOverlay) this.closeModal()
@@ -917,9 +1077,25 @@ class GitStatusBar {
         this.closeModal()
       }
     })
+
+    // Delegate click for history button in modal
+    this.modalContent.addEventListener('click', (e) => {
+      const target = e.target as HTMLElement
+      if (target.closest('.git-modal-history-btn')) {
+        this.closeModal()
+        this.openHistory()
+      }
+    })
+  }
+
+  private openHistory(): void {
+    if (this.onOpenHistory) {
+      this.onOpenHistory(this.currentPath)
+    }
   }
 
   async update(path: string): Promise<void> {
+    this.currentPath = path
     try {
       const response = await fetch(`/api/git?path=${encodeURIComponent(path)}`)
       if (!response.ok) {
@@ -955,6 +1131,15 @@ class GitStatusBar {
     } else {
       this.stateEl.textContent = 'clean'
       this.stateEl.className = 'git-state clean'
+    }
+
+    if (status.lastCommit) {
+      this.lastCommitEl.innerHTML =
+        `<span class="git-last-hash">${this.escapeHtml(status.lastCommit.shortHash)}</span> ` +
+        `<span class="git-last-message">${this.escapeHtml(status.lastCommit.message)}</span>`
+      this.lastCommitEl.hidden = false
+    } else {
+      this.lastCommitEl.hidden = true
     }
   }
 
@@ -1053,6 +1238,17 @@ class GitStatusBar {
       `)
     }
 
+    // View History button
+    sections.push(`
+      <button class="git-modal-history-btn">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="10"/>
+          <polyline points="12 6 12 12 16 14"/>
+        </svg>
+        View Commit History
+      </button>
+    `)
+
     this.modalContent.innerHTML = sections.join('')
   }
 
@@ -1077,6 +1273,7 @@ class FileBrowser {
   private viewer: FileViewer
   private infoModal: InfoModal
   private searchOverlay: SearchOverlay
+  private gitHistoryOverlay: GitHistoryOverlay
   private gitStatusBar: GitStatusBar
   private highlightedFile: string | null = null
 
@@ -1094,7 +1291,8 @@ class FileBrowser {
     this.searchOverlay = new SearchOverlay(
       (path, highlightFile) => this.handleSearchNavigation(path, highlightFile)
     )
-    this.gitStatusBar = new GitStatusBar()
+    this.gitHistoryOverlay = new GitHistoryOverlay((hash) => this.copyToClipboard(hash, 'Hash copied'))
+    this.gitStatusBar = new GitStatusBar((path) => this.gitHistoryOverlay.open(path))
 
     this.setupEventListeners()
     this.setupPullToRefresh()
@@ -1530,13 +1728,13 @@ class FileBrowser {
     return `/${parts.join('/')}`
   }
 
-  private async copyPath(path: string): Promise<void> {
+  private async copyToClipboard(text: string, successMessage: string): Promise<void> {
     try {
       if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(path)
+        await navigator.clipboard.writeText(text)
       } else {
         const textarea = document.createElement('textarea')
-        textarea.value = path
+        textarea.value = text
         textarea.style.position = 'fixed'
         textarea.style.opacity = '0'
         document.body.appendChild(textarea)
@@ -1544,10 +1742,14 @@ class FileBrowser {
         document.execCommand('copy')
         document.body.removeChild(textarea)
       }
-      this.showToast('Path copied')
+      this.showToast(successMessage)
     } catch {
-      this.showError('Failed to copy path')
+      this.showError('Failed to copy')
     }
+  }
+
+  private async copyPath(path: string): Promise<void> {
+    this.copyToClipboard(path, 'Path copied')
   }
 
   private showToast(message: string, isError = false): void {

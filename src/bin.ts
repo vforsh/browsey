@@ -32,6 +32,7 @@ const serveCommand = new Command('serve')
   .option('--no-https', 'Disable HTTPS')
   .option('--https-cert <path>', 'Path to TLS certificate (PEM)', './certs/browsey.pem')
   .option('--https-key <path>', 'Path to TLS private key (PEM)', './certs/browsey-key.pem')
+  .option('-w, --watch', 'Enable live reload on file changes (dev mode)')
   .action(async (pathArg: string, options: Record<string, unknown>) => {
     const requestedPort = parseInt(options.port as string, 10)
     if (isNaN(requestedPort) || requestedPort < 1 || requestedPort > 65535) {
@@ -67,6 +68,7 @@ const serveCommand = new Command('serve')
       https: httpsEnabled,
       httpsCert,
       httpsKey,
+      watch: (options.watch as boolean) ?? false,
     })
   })
 

@@ -15,7 +15,7 @@
   },
   "scripts": {
     "build": "bun run scripts/build.ts",
-    "dev": "bun run src/bin.ts",
+    "dev": "bun --watch src/bin.ts --no-bonjour",
     "typecheck": "tsc --noEmit",
     "prepublishOnly": "npm run build"
   },

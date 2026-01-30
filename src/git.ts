@@ -67,6 +67,74 @@ export async function isGitRepo(path: string): Promise<boolean> {
 /**
  * Get comprehensive git status for a directory.
  */
+export type CommitInfo = {
+  hash: string
+  shortHash: string
+  author: string
+  date: string
+  message: string
+}
+
+export type GitLogResult = {
+  commits: CommitInfo[]
+  hasMore: boolean
+}
+
+/**
+ * Get git commit log for a directory.
+ */
+export async function getGitLog(
+  path: string,
+  limit: number = 25,
+  skip: number = 0
+): Promise<GitLogResult> {
+  const repoRoot = await findGitRoot(path)
+
+  if (!repoRoot) {
+    return { commits: [], hasMore: false }
+  }
+
+  // Fetch limit+1 to detect if there are more commits
+  const logOutput = await runGitCommand(path, [
+    'log',
+    `--format=%H%n%h%n%an%n%aI%n%s`,
+    `-n`,
+    String(limit + 1),
+    `--skip=${skip}`,
+  ])
+
+  if (!logOutput) {
+    return { commits: [], hasMore: false }
+  }
+
+  const lines = logOutput.split('\n')
+  const commits: CommitInfo[] = []
+
+  // Each commit is 5 lines: hash, shortHash, author, date, message
+  for (let i = 0; i + 4 < lines.length; i += 5) {
+    const hash = lines[i]
+    const shortHash = lines[i + 1]
+    const author = lines[i + 2]
+    const date = lines[i + 3]
+    const message = lines[i + 4]
+
+    if (hash && shortHash && author && date && message !== undefined) {
+      commits.push({ hash, shortHash, author, date, message })
+    }
+  }
+
+  // Check if we got more than limit (meaning there are more)
+  const hasMore = commits.length > limit
+  if (hasMore) {
+    commits.pop() // Remove the extra one we fetched
+  }
+
+  return { commits, hasMore }
+}
+
+/**
+ * Get comprehensive git status for a directory.
+ */
 export async function getGitStatus(path: string): Promise<GitStatus> {
   const repoRoot = await findGitRoot(path)
 
