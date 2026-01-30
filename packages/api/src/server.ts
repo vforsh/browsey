@@ -16,7 +16,7 @@ export type ApiServerCallbacks = {
 export async function startApiServer(
   options: ApiServerOptions,
   callbacks: ApiServerCallbacks
-): Promise<void> {
+): Promise<{ shutdown: () => void }> {
   const rootPath = resolve(options.root)
   const listenHost = normalizeHost(options.host)
 
@@ -98,24 +98,26 @@ export async function startApiServer(
   const localUrl = getLocalUrl(listenHost, options.port, options.https)
   const networkUrl = getNetworkUrl(listenHost, options.port, options.https)
 
-  console.log()
-  console.log('  \x1b[1mBrowsey API\x1b[0m is running!')
-  console.log()
-  console.log(`  \x1b[2mLocal:\x1b[0m   ${localUrl}`)
-  if (networkUrl) {
-    console.log(`  \x1b[2mNetwork:\x1b[0m ${networkUrl}`)
-  }
-  console.log()
-  console.log(`  \x1b[2mServing:\x1b[0m ${rootPath}`)
-  console.log(`  \x1b[2mMode:\x1b[0m    ${options.readonly ? 'read-only' : 'read-write'}`)
-  console.log(`  \x1b[2mCORS:\x1b[0m    ${corsOrigin}`)
-  console.log()
+  if (!options.quiet) {
+    console.log()
+    console.log('  \x1b[1mBrowsey API\x1b[0m is running!')
+    console.log()
+    console.log(`  \x1b[2mLocal:\x1b[0m   ${localUrl}`)
+    if (networkUrl) {
+      console.log(`  \x1b[2mNetwork:\x1b[0m ${networkUrl}`)
+    }
+    console.log()
+    console.log(`  \x1b[2mServing:\x1b[0m ${rootPath}`)
+    console.log(`  \x1b[2mMode:\x1b[0m    ${options.readonly ? 'read-only' : 'read-write'}`)
+    console.log(`  \x1b[2mCORS:\x1b[0m    ${corsOrigin}`)
+    console.log()
 
-  if (options.showQR && networkUrl) {
-    console.log('  \x1b[2mAPI URL QR code:\x1b[0m')
-    console.log()
-    qrcode.generate(networkUrl, { small: true })
-    console.log()
+    if (options.showQR && networkUrl) {
+      console.log('  \x1b[2mAPI URL QR code:\x1b[0m')
+      console.log()
+      qrcode.generate(networkUrl, { small: true })
+      console.log()
+    }
   }
 
   // Start Bonjour advertising for iOS app discovery
@@ -123,16 +125,22 @@ export async function startApiServer(
   if (options.bonjour) {
     try {
       stopBonjour = advertiseService(options.port, rootPath)
-      console.log('  \x1b[2mBonjour:\x1b[0m  Advertising as _browsey._tcp')
-      console.log()
+      if (!options.quiet) {
+        console.log('  \x1b[2mBonjour:\x1b[0m  Advertising as _browsey._tcp')
+        console.log()
+      }
     } catch {
-      console.log('  \x1b[33mWarning:\x1b[0m  Could not start Bonjour advertising')
-      console.log()
+      if (!options.quiet) {
+        console.log('  \x1b[33mWarning:\x1b[0m  Could not start Bonjour advertising')
+        console.log()
+      }
     }
   }
 
-  console.log('  \x1b[2mPress Ctrl+C to stop\x1b[0m')
-  console.log()
+  if (!options.quiet) {
+    console.log('  \x1b[2mPress Ctrl+C to stop\x1b[0m')
+    console.log()
+  }
 
   // Register this instance
   callbacks.register({
@@ -148,7 +156,6 @@ export async function startApiServer(
   })
 
   const shutdown = () => {
-    console.log('\n  Shutting down...')
     callbacks.deregister(process.pid)
     if (stopBonjour) {
       stopBonjour()
@@ -157,11 +164,9 @@ export async function startApiServer(
       stopWatcher()
     }
     server.stop()
-    process.exit(0)
   }
 
-  process.on('SIGINT', shutdown)
-  process.on('SIGTERM', shutdown)
+  return { shutdown }
 }
 
 function normalizeHost(host: string): string {

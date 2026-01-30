@@ -123,7 +123,7 @@ export type AppServerCallbacks = {
 export async function startAppServer(
   options: AppServerOptions,
   callbacks: AppServerCallbacks
-): Promise<void> {
+): Promise<{ shutdown: () => void }> {
   const listenHost = normalizeHost(options.host)
 
   if (options.https && (!options.httpsCert || !options.httpsKey)) {
@@ -206,26 +206,28 @@ export async function startAppServer(
   const localUrl = getLocalUrl(listenHost, options.port, options.https)
   const networkUrl = getNetworkUrl(listenHost, options.port, options.https)
 
-  console.log()
-  console.log('  \x1b[1mBrowsey App\x1b[0m is running!')
-  console.log()
-  console.log(`  \x1b[2mLocal:\x1b[0m   ${localUrl}`)
-  if (networkUrl) {
-    console.log(`  \x1b[2mNetwork:\x1b[0m ${networkUrl}`)
-  }
-  console.log()
-  console.log(`  \x1b[2mAPI:\x1b[0m     ${apiBaseUrl || '(configure in browser)'}`)
-  console.log()
-
-  if (options.showQR && networkUrl) {
-    console.log('  \x1b[2mScan QR code to open on mobile:\x1b[0m')
+  if (!options.quiet) {
     console.log()
-    qrcode.generate(networkUrl, { small: true })
+    console.log('  \x1b[1mBrowsey App\x1b[0m is running!')
+    console.log()
+    console.log(`  \x1b[2mLocal:\x1b[0m   ${localUrl}`)
+    if (networkUrl) {
+      console.log(`  \x1b[2mNetwork:\x1b[0m ${networkUrl}`)
+    }
+    console.log()
+    console.log(`  \x1b[2mAPI:\x1b[0m     ${apiBaseUrl || '(configure in browser)'}`)
+    console.log()
+
+    if (options.showQR && networkUrl) {
+      console.log('  \x1b[2mScan QR code to open on mobile:\x1b[0m')
+      console.log()
+      qrcode.generate(networkUrl, { small: true })
+      console.log()
+    }
+
+    console.log('  \x1b[2mPress Ctrl+C to stop\x1b[0m')
     console.log()
   }
-
-  console.log('  \x1b[2mPress Ctrl+C to stop\x1b[0m')
-  console.log()
 
   // Register this instance
   callbacks.register({
@@ -246,14 +248,11 @@ export async function startAppServer(
   }
 
   const shutdown = () => {
-    console.log('\n  Shutting down...')
     callbacks.deregister(process.pid)
     server.stop()
-    process.exit(0)
   }
 
-  process.on('SIGINT', shutdown)
-  process.on('SIGTERM', shutdown)
+  return { shutdown }
 }
 
 function normalizeHost(host: string): string {

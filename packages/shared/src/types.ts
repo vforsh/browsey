@@ -13,6 +13,7 @@ export type ApiServerOptions = {
   httpsKey?: string
   watch: boolean
   corsOrigin: string
+  quiet?: boolean
 }
 
 export type AppServerOptions = {
@@ -25,6 +26,7 @@ export type AppServerOptions = {
   httpsCert?: string
   httpsKey?: string
   open: boolean
+  quiet?: boolean
 }
 
 export type FileItem = {
