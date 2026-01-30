@@ -18,7 +18,7 @@ export type ApiServerOptions = {
 export type AppServerOptions = {
   port: number
   host: string
-  apiUrl: string
+  apiUrl?: string
   showQR: boolean
   version: string
   https: boolean

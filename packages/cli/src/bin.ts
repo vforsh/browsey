@@ -85,7 +85,7 @@ const appCommand = new Command('app')
   .description('Start the UI server')
   .option('-p, --port <port>', 'Port to listen on', '4201')
   .option('-h, --host <host>', 'Host to bind to', '0.0.0.0')
-  .requiredOption('--api <url>', 'API server URL (required)')
+  .option('--api <url>', 'API server URL (optional, configure in browser if omitted)')
   .option('--open', 'Open browser automatically')
   .option('--no-https', 'Disable HTTPS')
   .option('--https-cert <path>', 'Path to TLS certificate (PEM)', './certs/browsey.pem')
@@ -116,7 +116,7 @@ const appCommand = new Command('app')
       {
         port,
         host,
-        apiUrl: options.api as string,
+        apiUrl: options.api as string | undefined,
         showQR: (options.qr as boolean) ?? true,
         version: VERSION,
         https: httpsEnabled,

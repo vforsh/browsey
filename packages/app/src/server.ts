@@ -153,12 +153,14 @@ export async function startAppServer(
   const ui = await getUIContent()
   const pwa = await getPwaAssets()
 
-  // Inject the API base URL into HTML
-  const apiBaseUrl = options.apiUrl.replace(/\/$/, '')
-  const htmlWithApi = ui.html.replace(
-    'window.__BROWSEY_API_BASE__ = ""',
-    `window.__BROWSEY_API_BASE__ = ${JSON.stringify(apiBaseUrl)}`
-  )
+  // Inject the API base URL into HTML (if provided)
+  const apiBaseUrl = options.apiUrl ? options.apiUrl.replace(/\/$/, '') : ''
+  const htmlWithApi = apiBaseUrl
+    ? ui.html.replace(
+        'window.__BROWSEY_API_BASE__ = ""',
+        `window.__BROWSEY_API_BASE__ = ${JSON.stringify(apiBaseUrl)}`
+      )
+    : ui.html
 
   const server = Bun.serve({
     port: options.port,
@@ -212,7 +214,7 @@ export async function startAppServer(
     console.log(`  \x1b[2mNetwork:\x1b[0m ${networkUrl}`)
   }
   console.log()
-  console.log(`  \x1b[2mAPI:\x1b[0m     ${apiBaseUrl}`)
+  console.log(`  \x1b[2mAPI:\x1b[0m     ${apiBaseUrl || '(configure in browser)'}`)
   console.log()
 
   if (options.showQR && networkUrl) {
@@ -232,7 +234,7 @@ export async function startAppServer(
     host: options.host,
     kind: 'app',
     rootPath: '',
-    apiUrl: apiBaseUrl,
+    apiUrl: apiBaseUrl || undefined,
     startedAt: new Date().toISOString(),
     readonly: true,
     bonjour: false,

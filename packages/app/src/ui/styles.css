@@ -1542,3 +1542,298 @@ body {
   color: var(--text-secondary);
   background: rgba(255, 255, 255, 0.06);
 }
+
+/* Connect Screen */
+.connect-screen {
+  position: fixed;
+  inset: 0;
+  background: var(--bg-primary);
+  z-index: 5000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.connect-screen[hidden] {
+  display: none;
+}
+
+.connect-card {
+  width: 100%;
+  max-width: 380px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+}
+
+.connect-logo {
+  width: 80px;
+  height: 80px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-secondary);
+  border-radius: 20px;
+  color: var(--accent);
+}
+
+.connect-title {
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.connect-subtitle {
+  font-size: 15px;
+  color: var(--text-secondary);
+  margin: 0;
+}
+
+.connect-saved-container {
+  width: 100%;
+  margin-top: 4px;
+}
+
+.connect-saved-container[hidden] {
+  display: none;
+}
+
+.connect-saved {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 12px 16px;
+  background: var(--bg-secondary);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  color: var(--accent);
+  font-size: 14px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+  text-align: left;
+  overflow: hidden;
+}
+
+.connect-saved:hover {
+  background: var(--bg-hover);
+  border-color: var(--accent);
+}
+
+.connect-saved span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.connect-form {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.connect-input {
+  width: 100%;
+  padding: 14px 16px;
+  background: var(--bg-secondary);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 10px;
+  color: var(--text-primary);
+  font-size: 16px;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.connect-input:focus {
+  border-color: var(--accent);
+}
+
+.connect-input::placeholder {
+  color: var(--text-secondary);
+}
+
+.connect-btn {
+  width: 100%;
+  padding: 14px 16px;
+  background: var(--accent);
+  border: none;
+  border-radius: 10px;
+  color: #fff;
+  font-size: 16px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.connect-btn:hover {
+  background: var(--accent-hover);
+}
+
+.connect-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.connect-scan-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  padding: 14px 16px;
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 10px;
+  color: var(--text-primary);
+  font-size: 15px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.connect-scan-btn[hidden] {
+  display: none;
+}
+
+.connect-scan-btn:hover {
+  background: var(--bg-hover);
+  border-color: rgba(255, 255, 255, 0.25);
+}
+
+.connect-error {
+  width: 100%;
+  padding: 12px 16px;
+  background: rgba(255, 107, 107, 0.15);
+  border: 1px solid rgba(255, 107, 107, 0.3);
+  border-radius: 10px;
+  color: var(--danger);
+  font-size: 14px;
+  text-align: center;
+}
+
+.connect-error[hidden] {
+  display: none;
+}
+
+/* QR Scanner Overlay */
+.qr-overlay {
+  position: fixed;
+  inset: 0;
+  background: #000;
+  z-index: 6000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.qr-overlay[hidden] {
+  display: none;
+}
+
+.qr-video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.qr-viewfinder-mask {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.5);
+}
+
+.qr-viewfinder {
+  width: 250px;
+  height: 250px;
+  border: 2px solid rgba(255, 255, 255, 0.7);
+  border-radius: 16px;
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.5);
+}
+
+.qr-cancel-btn {
+  position: absolute;
+  bottom: calc(40px + var(--safe-bottom));
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 14px 40px;
+  background: rgba(255, 255, 255, 0.15);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 12px;
+  color: #fff;
+  font-size: 16px;
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.qr-cancel-btn:hover {
+  background: rgba(255, 255, 255, 0.25);
+}
+
+/* Server Indicator (dynamic mode) */
+.server-indicator {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 6px 16px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  flex-shrink: 0;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.server-indicator[hidden] {
+  display: none;
+}
+
+.server-indicator:hover {
+  background: var(--bg-hover);
+}
+
+.server-indicator-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #6bcb77;
+  flex-shrink: 0;
+}
+
+.server-indicator-url {
+  font-size: 12px;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.server-indicator-change {
+  font-size: 11px;
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+@media (min-width: 768px) {
+  .server-indicator {
+    max-width: 900px;
+    margin: 0 auto;
+    width: 100%;
+  }
+}

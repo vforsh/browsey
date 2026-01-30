@@ -13,6 +13,7 @@ import {
   TriangleAlert,
 } from 'lucide-static'
 import hljs from 'highlight.js'
+import jsQR from 'jsqr'
 import { marked } from 'marked'
 import { markedHighlight } from 'marked-highlight'
 
@@ -1548,6 +1549,270 @@ class GitStatusBar {
   }
 }
 
+class QRScanner {
+  private overlay: HTMLElement
+  private video: HTMLVideoElement
+  private cancelBtn: HTMLElement
+  private canvas: HTMLCanvasElement
+  private ctx: CanvasRenderingContext2D
+  private stream: MediaStream | null = null
+  private scanTimer: number | null = null
+  private onDetect: (url: string) => void
+  private onCancel: () => void
+
+  constructor(onDetect: (url: string) => void, onCancel: () => void) {
+    this.onDetect = onDetect
+    this.onCancel = onCancel
+    this.overlay = document.getElementById('qr-overlay')!
+    this.video = document.getElementById('qr-video') as HTMLVideoElement
+    this.cancelBtn = document.getElementById('qr-cancel-btn')!
+    this.canvas = document.createElement('canvas')
+    this.ctx = this.canvas.getContext('2d', { willReadFrequently: true })!
+
+    this.cancelBtn.addEventListener('click', () => this.close())
+  }
+
+  static isSupported(): boolean {
+    return !!(navigator.mediaDevices?.getUserMedia)
+  }
+
+  async open(): Promise<void> {
+    this.overlay.hidden = false
+
+    try {
+      this.stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'environment' },
+      })
+      this.video.srcObject = this.stream
+      await this.video.play()
+      this.startDetection()
+    } catch {
+      this.close()
+    }
+  }
+
+  close(): void {
+    this.stopScanning()
+    if (this.stream) {
+      this.stream.getTracks().forEach((track) => track.stop())
+      this.stream = null
+    }
+    this.video.srcObject = null
+    this.overlay.hidden = true
+    this.onCancel()
+  }
+
+  private startDetection(): void {
+    const scan = () => {
+      if (!this.stream || this.video.readyState < this.video.HAVE_ENOUGH_DATA) {
+        this.scanTimer = window.setTimeout(scan, 100)
+        return
+      }
+
+      this.canvas.width = this.video.videoWidth
+      this.canvas.height = this.video.videoHeight
+      this.ctx.drawImage(this.video, 0, 0)
+      const imageData = this.ctx.getImageData(0, 0, this.canvas.width, this.canvas.height)
+
+      const code = jsQR(imageData.data, imageData.width, imageData.height, {
+        inversionAttempts: 'dontInvert',
+      })
+
+      if (code?.data) {
+        this.stopAndNotify(code.data)
+        return
+      }
+
+      this.scanTimer = window.setTimeout(scan, 100)
+    }
+
+    scan()
+  }
+
+  private stopScanning(): void {
+    if (this.scanTimer !== null) {
+      clearTimeout(this.scanTimer)
+      this.scanTimer = null
+    }
+  }
+
+  private stopAndNotify(url: string): void {
+    this.stopScanning()
+    if (this.stream) {
+      this.stream.getTracks().forEach((track) => track.stop())
+      this.stream = null
+    }
+    this.video.srcObject = null
+    this.overlay.hidden = true
+    this.onDetect(url)
+  }
+}
+
+class ConnectScreen {
+  private screen: HTMLElement
+  private form: HTMLFormElement
+  private input: HTMLInputElement
+  private connectBtn: HTMLButtonElement
+  private scanBtn: HTMLElement
+  private errorEl: HTMLElement
+  private savedContainer: HTMLElement
+  private savedBtn: HTMLElement
+  private savedUrlEl: HTMLElement
+  private scanner: QRScanner | null = null
+  private onConnect: (url: string) => void
+
+  private static readonly STORAGE_KEY = 'browsey-api-url'
+
+  constructor(onConnect: (url: string) => void) {
+    this.onConnect = onConnect
+    this.screen = document.getElementById('connect-screen')!
+    this.form = document.getElementById('connect-form') as HTMLFormElement
+    this.input = document.getElementById('connect-input') as HTMLInputElement
+    this.connectBtn = document.getElementById('connect-btn') as HTMLButtonElement
+    this.scanBtn = document.getElementById('connect-scan-btn')!
+    this.errorEl = document.getElementById('connect-error')!
+    this.savedContainer = document.getElementById('connect-saved-container')!
+    this.savedBtn = document.getElementById('connect-saved-btn')!
+    this.savedUrlEl = document.getElementById('connect-saved-url')!
+
+    this.setupEventListeners()
+  }
+
+  private setupEventListeners(): void {
+    this.form.addEventListener('submit', (e) => {
+      e.preventDefault()
+      this.connect(this.input.value)
+    })
+
+    this.savedBtn.addEventListener('click', () => {
+      const saved = ConnectScreen.getSavedUrl()
+      if (saved) this.connect(saved)
+    })
+
+    if (QRScanner.isSupported()) {
+      this.scanBtn.hidden = false
+      this.scanBtn.addEventListener('click', () => this.openScanner())
+    }
+  }
+
+  show(error?: string): void {
+    // Hide main UI elements
+    document.querySelector('.header')?.setAttribute('hidden', '')
+    document.getElementById('git-status-bar')?.setAttribute('hidden', '')
+    document.getElementById('server-indicator')?.setAttribute('hidden', '')
+    document.getElementById('file-list')?.setAttribute('hidden', '')
+
+    this.screen.hidden = false
+    this.errorEl.hidden = !error
+    if (error) {
+      this.errorEl.textContent = error
+    }
+
+    // Show saved URL as quick-connect option
+    const saved = ConnectScreen.getSavedUrl()
+    if (saved) {
+      this.savedContainer.hidden = false
+      this.savedUrlEl.textContent = saved
+    } else {
+      this.savedContainer.hidden = true
+    }
+
+    this.input.focus()
+  }
+
+  hide(): void {
+    this.screen.hidden = true
+
+    // Restore main UI elements
+    document.querySelector('.header')?.removeAttribute('hidden')
+    document.getElementById('file-list')?.removeAttribute('hidden')
+  }
+
+  private async connect(rawUrl: string): Promise<void> {
+    const url = this.normalizeUrl(rawUrl)
+    if (!url) {
+      this.showError('Please enter a valid URL')
+      return
+    }
+
+    this.setLoading(true)
+    this.hideError()
+
+    try {
+      const response = await fetch(`${url}/api/health`, {
+        signal: AbortSignal.timeout(5000),
+      })
+      if (!response.ok) {
+        throw new Error('Server responded with an error')
+      }
+    } catch {
+      this.setLoading(false)
+      this.showError('Could not connect to API server')
+      return
+    }
+
+    this.setLoading(false)
+    ConnectScreen.saveUrl(url)
+    window.__BROWSEY_API_BASE__ = url
+    this.hide()
+    this.onConnect(url)
+  }
+
+  private openScanner(): void {
+    this.scanner = new QRScanner(
+      (detectedUrl) => {
+        this.scanner = null
+        this.connect(detectedUrl)
+      },
+      () => {
+        this.scanner = null
+      }
+    )
+    this.scanner.open()
+  }
+
+  private normalizeUrl(raw: string): string {
+    let url = raw.trim()
+    if (!url) return ''
+    url = url.replace(/\/+$/, '')
+    if (!/^https?:\/\//i.test(url)) {
+      url = 'http://' + url
+    }
+    try {
+      new URL(url) // validate
+      return url
+    } catch {
+      return ''
+    }
+  }
+
+  private setLoading(loading: boolean): void {
+    this.connectBtn.disabled = loading
+    this.connectBtn.textContent = loading ? 'Connecting...' : 'Connect'
+  }
+
+  private showError(message: string): void {
+    this.errorEl.textContent = message
+    this.errorEl.hidden = false
+  }
+
+  private hideError(): void {
+    this.errorEl.hidden = true
+  }
+
+  static getSavedUrl(): string | null {
+    return localStorage.getItem(ConnectScreen.STORAGE_KEY)
+  }
+
+  static saveUrl(url: string): void {
+    localStorage.setItem(ConnectScreen.STORAGE_KEY, url)
+  }
+
+  static clearUrl(): void {
+    localStorage.removeItem(ConnectScreen.STORAGE_KEY)
+  }
+}
+
 class FileBrowser {
   private currentPath = '/'
   private currentAbsolutePath = ''
@@ -1566,8 +1831,10 @@ class FileBrowser {
   private gitChangesOverlay: GitChangesOverlay
   private gitStatusBar: GitStatusBar
   private highlightedFile: string | null = null
+  private dynamicMode: boolean
 
-  constructor() {
+  constructor(dynamicMode = false) {
+    this.dynamicMode = dynamicMode
     this.fileList = document.getElementById('file-list')!
     this.pathDisplay = document.getElementById('path-display')!
     this.loading = document.getElementById('loading')!
@@ -1590,6 +1857,9 @@ class FileBrowser {
 
     this.setupEventListeners()
     this.setupPullToRefresh()
+    if (this.dynamicMode) {
+      this.setupServerIndicator()
+    }
     window.addEventListener('popstate', () => this.handlePopState())
     this.loadFromLocation()
   }
@@ -1700,6 +1970,29 @@ class FileBrowser {
       },
       { passive: true }
     )
+  }
+
+  private setupServerIndicator(): void {
+    const indicator = document.getElementById('server-indicator')
+    const urlEl = document.getElementById('server-indicator-url')
+    if (!indicator || !urlEl) return
+
+    indicator.hidden = false
+    urlEl.textContent = window.__BROWSEY_API_BASE__
+
+    indicator.addEventListener('click', () => {
+      ConnectScreen.clearUrl()
+      window.__BROWSEY_API_BASE__ = ''
+      indicator.hidden = true
+
+      const connectScreen = new ConnectScreen((url) => {
+        window.__BROWSEY_API_BASE__ = url
+        urlEl.textContent = url
+        indicator.hidden = false
+        this.navigate('/')
+      })
+      connectScreen.show()
+    })
   }
 
   async navigate(
@@ -2179,4 +2472,39 @@ class FileBrowser {
 }
 
 // Initialize
-new FileBrowser()
+const serverApiUrl = window.__BROWSEY_API_BASE__
+if (serverApiUrl) {
+  // API URL baked in by server (--api was provided)
+  new FileBrowser()
+} else {
+  // No API URL — check localStorage or show connect screen
+  const saved = ConnectScreen.getSavedUrl()
+  if (saved) {
+    // Try saved URL, fall back to connect screen if it fails
+    fetch(`${saved}/api/health`, { signal: AbortSignal.timeout(5000) })
+      .then((response) => {
+        if (response.ok) {
+          window.__BROWSEY_API_BASE__ = saved
+          new FileBrowser(true)
+        } else {
+          showConnectScreen('Saved server is not responding')
+        }
+      })
+      .catch(() => {
+        showConnectScreen('Could not reach saved server')
+      })
+  } else {
+    showConnectScreen()
+  }
+}
+
+function showConnectScreen(error?: string): void {
+  // Hide loading indicator
+  const loading = document.getElementById('loading')
+  if (loading) loading.style.display = 'none'
+
+  const connectScreen = new ConnectScreen((url) => {
+    new FileBrowser(true)
+  })
+  connectScreen.show(error)
+}

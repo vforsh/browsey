@@ -8,6 +8,7 @@
   "dependencies": {
     "@vforsh/browsey-shared": "workspace:*",
     "highlight.js": "^11.11.1",
+    "jsqr": "^1.4.0",
     "lucide-static": "^0.562.0",
     "marked": "^17.0.1",
     "marked-highlight": "^2.2.3",

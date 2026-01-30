@@ -38,6 +38,13 @@
     </div>
   </header>
 
+  <!-- Server Indicator (dynamic mode only) -->
+  <div class="server-indicator" id="server-indicator" hidden>
+    <span class="server-indicator-dot"></span>
+    <span class="server-indicator-url" id="server-indicator-url"></span>
+    <span class="server-indicator-change">change</span>
+  </div>
+
   <!-- Git Status Bar -->
   <div class="git-status-bar" id="git-status-bar" hidden>
     <span class="git-icon"></span>
@@ -211,6 +218,58 @@
       </div>
       <div class="git-history-list" id="git-history-list"></div>
     </div>
+  </div>
+
+  <!-- Connect Screen -->
+  <div class="connect-screen" id="connect-screen" hidden>
+    <div class="connect-card">
+      <div class="connect-logo">
+        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+        </svg>
+      </div>
+      <h1 class="connect-title">Browsey</h1>
+      <p class="connect-subtitle">Connect to API Server</p>
+      <div class="connect-saved-container" id="connect-saved-container" hidden>
+        <button class="connect-saved" id="connect-saved-btn">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="10"/>
+            <polyline points="12 6 12 12 16 14"/>
+          </svg>
+          <span id="connect-saved-url"></span>
+        </button>
+      </div>
+      <form class="connect-form" id="connect-form">
+        <input type="url"
+               id="connect-input"
+               class="connect-input"
+               placeholder="http://192.168.1.5:4200"
+               autocomplete="url"
+               spellcheck="false"
+               required>
+        <button type="submit" class="connect-btn" id="connect-btn">Connect</button>
+      </form>
+      <button class="connect-scan-btn" id="connect-scan-btn" hidden>
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M3 7V5a2 2 0 0 1 2-2h2"/>
+          <path d="M17 3h2a2 2 0 0 1 2 2v2"/>
+          <path d="M21 17v2a2 2 0 0 1-2 2h-2"/>
+          <path d="M7 21H5a2 2 0 0 1-2-2v-2"/>
+          <rect x="7" y="7" width="10" height="10" rx="1"/>
+        </svg>
+        Scan QR Code
+      </button>
+      <div class="connect-error" id="connect-error" hidden></div>
+    </div>
+  </div>
+
+  <!-- QR Scanner Overlay -->
+  <div class="qr-overlay" id="qr-overlay" hidden>
+    <video class="qr-video" id="qr-video" autoplay playsinline></video>
+    <div class="qr-viewfinder-mask">
+      <div class="qr-viewfinder"></div>
+    </div>
+    <button class="qr-cancel-btn" id="qr-cancel-btn">Cancel</button>
   </div>
 
   <script>window.__BROWSEY_API_BASE__ = "";</script>
