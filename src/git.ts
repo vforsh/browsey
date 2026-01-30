@@ -1,6 +1,7 @@
 import { spawn } from 'child_process'
 import { access, constants } from 'fs/promises'
 import { join, dirname } from 'path'
+import type { GitChangeFile, GitChangesResponse } from './types.js'
 
 export type GitStatus = {
   isRepo: boolean
@@ -35,7 +36,7 @@ async function runGitCommand(cwd: string, args: string[]): Promise<string | null
 
     proc.on('close', (code) => {
       if (code === 0) {
-        resolve(stdout.trim())
+        resolve(stdout.trimEnd())
       } else {
         resolve(null)
       }
@@ -217,4 +218,54 @@ export async function getGitStatus(path: string): Promise<GitStatus> {
     remoteUrl,
     repoRoot,
   }
+}
+
+/**
+ * Get detailed git changes (file-level) for a directory.
+ * Parses `git status --porcelain` into staged, unstaged, and untracked file lists.
+ */
+export async function getGitChanges(path: string): Promise<GitChangesResponse> {
+  const repoRoot = await findGitRoot(path)
+
+  if (!repoRoot) {
+    return { staged: [], unstaged: [], untracked: [] }
+  }
+
+  const statusOutput = await runGitCommand(repoRoot, ['status', '--porcelain'])
+
+  if (!statusOutput) {
+    return { staged: [], unstaged: [], untracked: [] }
+  }
+
+  const staged: GitChangeFile[] = []
+  const unstaged: GitChangeFile[] = []
+  const untracked: GitChangeFile[] = []
+
+  const lines = statusOutput.split('\n').filter(Boolean)
+  for (const line of lines) {
+    const indexStatus = line[0] ?? ' '
+    const workTreeStatus = line[1] ?? ' '
+    let filePath = line.substring(3)
+
+    // Handle renames: "R  old -> new"
+    if (indexStatus === 'R' || workTreeStatus === 'R') {
+      const arrowIndex = filePath.indexOf(' -> ')
+      if (arrowIndex !== -1) {
+        filePath = filePath.substring(arrowIndex + 4)
+      }
+    }
+
+    if (indexStatus === '?') {
+      untracked.push({ path: filePath, indexStatus, workTreeStatus })
+    } else {
+      if (indexStatus !== ' ') {
+        staged.push({ path: filePath, indexStatus, workTreeStatus })
+      }
+      if (workTreeStatus !== ' ') {
+        unstaged.push({ path: filePath, indexStatus, workTreeStatus })
+      }
+    }
+  }
+
+  return { staged, unstaged, untracked }
 }

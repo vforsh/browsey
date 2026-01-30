@@ -1035,6 +1035,264 @@ class GitHistoryOverlay {
   }
 }
 
+type GitChangeFile = {
+  path: string
+  indexStatus: string
+  workTreeStatus: string
+}
+
+type GitChangesResponse = {
+  staged: GitChangeFile[]
+  unstaged: GitChangeFile[]
+  untracked: GitChangeFile[]
+}
+
+type TreeNode = {
+  name: string
+  isDir: boolean
+  children: Map<string, TreeNode>
+  file?: GitChangeFile
+  statusLabel?: string
+}
+
+class GitChangesOverlay {
+  private overlay: HTMLElement
+  private content: HTMLElement
+  private closeBtn: HTMLElement
+  private currentPath: string = '/'
+
+  constructor() {
+    this.overlay = document.getElementById('git-changes-overlay')!
+    this.content = document.getElementById('git-changes-content')!
+    this.closeBtn = document.getElementById('git-changes-close')!
+
+    this.setupEventListeners()
+  }
+
+  private setupEventListeners(): void {
+    this.closeBtn.addEventListener('click', () => this.close())
+    this.overlay.addEventListener('click', (e) => {
+      if (e.target === this.overlay) this.close()
+    })
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && !this.overlay.hidden) {
+        this.close()
+      }
+    })
+
+    // Delegate click events for collapsible sections and directories
+    this.content.addEventListener('click', (e) => {
+      const target = e.target as HTMLElement
+
+      // Section header toggle
+      const sectionHeader = target.closest('.git-changes-section-header')
+      if (sectionHeader) {
+        const section = sectionHeader.closest('.git-changes-section')
+        if (!section) return
+        const body = section.querySelector('.git-changes-section-body')
+        const chevron = sectionHeader.querySelector('.git-changes-section-chevron')
+        if (body && chevron) {
+          body.classList.toggle('collapsed')
+          chevron.classList.toggle('collapsed')
+        }
+        return
+      }
+
+      // Directory tree item toggle
+      const dirItem = target.closest('.git-changes-tree-item.directory')
+      if (dirItem) {
+        const childContainer = dirItem.nextElementSibling
+        const chevron = dirItem.querySelector('.git-changes-tree-chevron')
+        if (childContainer && chevron) {
+          childContainer.classList.toggle('collapsed')
+          chevron.classList.toggle('collapsed')
+        }
+      }
+    })
+  }
+
+  async open(path: string): Promise<void> {
+    this.currentPath = path
+    this.overlay.hidden = false
+    this.content.innerHTML = '<div class="git-changes-loading">Loading changes...</div>'
+
+    try {
+      const response = await fetch(`/api/git/changes?path=${encodeURIComponent(path)}`)
+      if (!response.ok) {
+        throw new Error('Failed to load changes')
+      }
+
+      const data: GitChangesResponse = await response.json()
+      this.render(data)
+    } catch (error) {
+      this.content.innerHTML = `<div class="git-changes-error">${error instanceof Error ? error.message : 'Failed to load changes'}</div>`
+    }
+  }
+
+  close(): void {
+    this.overlay.hidden = true
+    this.content.innerHTML = ''
+  }
+
+  private render(data: GitChangesResponse): void {
+    const hasAny = data.staged.length > 0 || data.unstaged.length > 0 || data.untracked.length > 0
+
+    if (!hasAny) {
+      this.content.innerHTML = '<div class="git-changes-empty">No changes</div>'
+      return
+    }
+
+    const sections: string[] = []
+
+    if (data.staged.length > 0) {
+      sections.push(this.renderSection('Staged', 'staged', data.staged, (f) => f.indexStatus))
+    }
+    if (data.unstaged.length > 0) {
+      sections.push(this.renderSection('Modified', 'unstaged', data.unstaged, (f) => f.workTreeStatus))
+    }
+    if (data.untracked.length > 0) {
+      sections.push(this.renderSection('Untracked', 'untracked', data.untracked, () => '?'))
+    }
+
+    this.content.innerHTML = sections.join('')
+  }
+
+  private renderSection(
+    label: string,
+    cssClass: string,
+    files: GitChangeFile[],
+    getStatus: (f: GitChangeFile) => string
+  ): string {
+    const tree = this.buildTree(files, getStatus)
+    const treeHtml = this.renderTree(tree, 0, cssClass === 'untracked')
+
+    return `
+      <div class="git-changes-section">
+        <div class="git-changes-section-header">
+          <svg class="git-changes-section-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="6 9 12 15 18 9"/>
+          </svg>
+          <span class="git-changes-section-label ${cssClass}">${label}</span>
+          <span class="git-changes-section-count">${files.length}</span>
+        </div>
+        <div class="git-changes-section-body">
+          ${treeHtml}
+        </div>
+      </div>
+    `
+  }
+
+  private buildTree(files: GitChangeFile[], getStatus: (f: GitChangeFile) => string): TreeNode {
+    const root: TreeNode = { name: '', isDir: true, children: new Map() }
+
+    for (const file of files) {
+      const parts = file.path.split('/')
+      let current = root
+
+      for (let i = 0; i < parts.length; i++) {
+        const part = parts[i]!
+        const isLast = i === parts.length - 1
+
+        if (!current.children.has(part)) {
+          current.children.set(part, {
+            name: part,
+            isDir: !isLast,
+            children: new Map(),
+            file: isLast ? file : undefined,
+            statusLabel: isLast ? getStatus(file) : undefined,
+          })
+        }
+
+        current = current.children.get(part)!
+      }
+    }
+
+    // Collapse single-child directory chains
+    this.collapseTree(root)
+    return root
+  }
+
+  private collapseTree(node: TreeNode): void {
+    for (const [key, child] of node.children) {
+      this.collapseTree(child)
+
+      // Collapse: if a directory has exactly one child that is also a directory
+      if (child.isDir && child.children.size === 1) {
+        const [grandchildKey, grandchild] = child.children.entries().next().value as [string, TreeNode]
+        if (grandchild.isDir) {
+          // Merge names: "src" + "ui" -> "src/ui"
+          const mergedName = child.name + '/' + grandchild.name
+          grandchild.name = mergedName
+          node.children.delete(key)
+          node.children.set(mergedName, grandchild)
+        }
+      }
+    }
+  }
+
+  private renderTree(node: TreeNode, depth: number, isUntracked: boolean): string {
+    // Sort: directories first, then alphabetically
+    const entries = Array.from(node.children.values()).sort((a, b) => {
+      if (a.isDir !== b.isDir) return a.isDir ? -1 : 1
+      return a.name.localeCompare(b.name)
+    })
+
+    return entries.map((child) => {
+      if (child.isDir) {
+        return this.renderDirNode(child, depth, isUntracked)
+      }
+      return this.renderFileNode(child, depth, isUntracked)
+    }).join('')
+  }
+
+  private renderDirNode(node: TreeNode, depth: number, isUntracked: boolean): string {
+    const indentHtml = Array(depth).fill('<span class="git-changes-tree-indent"></span>').join('')
+    const childrenHtml = this.renderTree(node, depth + 1, isUntracked)
+
+    return `
+      <div class="git-changes-tree-item directory" style="padding-left: ${16 + depth * 16}px">
+        ${indentHtml}
+        <svg class="git-changes-tree-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="6 9 12 15 18 9"/>
+        </svg>
+        <svg class="git-changes-tree-icon folder" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+        </svg>
+        <span class="git-changes-tree-name directory">${this.escapeHtml(node.name)}/</span>
+      </div>
+      <div class="git-changes-tree-children">
+        ${childrenHtml}
+      </div>
+    `
+  }
+
+  private renderFileNode(node: TreeNode, depth: number, isUntracked: boolean): string {
+    const indentHtml = Array(depth).fill('<span class="git-changes-tree-indent"></span>').join('')
+    const status = node.statusLabel || '?'
+    const statusClass = isUntracked ? 'untracked' : status
+
+    return `
+      <div class="git-changes-tree-item" style="padding-left: ${16 + depth * 16}px">
+        ${indentHtml}
+        <span class="git-changes-tree-indent"></span>
+        <svg class="git-changes-tree-icon file" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/>
+          <polyline points="14 2 14 8 20 8"/>
+        </svg>
+        <span class="git-changes-tree-name">${this.escapeHtml(node.name)}</span>
+        <span class="git-changes-tree-status ${this.escapeHtml(statusClass)}">${this.escapeHtml(status)}</span>
+      </div>
+    `
+  }
+
+  private escapeHtml(text: string): string {
+    const div = document.createElement('div')
+    div.textContent = text
+    return div.innerHTML
+  }
+}
+
 class GitStatusBar {
   private statusBar: HTMLElement
   private branchEl: HTMLElement
@@ -1048,8 +1306,10 @@ class GitStatusBar {
   private currentStatus: GitStatusResponse | null = null
   private currentPath: string = '/'
   private onOpenHistory?: (path: string) => void
+  private onOpenChanges?: (path: string) => void
+  private gitIcon: HTMLElement
 
-  constructor(onOpenHistory?: (path: string) => void) {
+  constructor(onOpenHistory?: (path: string) => void, onOpenChanges?: (path: string) => void) {
     this.statusBar = document.getElementById('git-status-bar')!
     this.branchEl = document.getElementById('git-branch')!
     this.stateEl = document.getElementById('git-state')!
@@ -1059,7 +1319,9 @@ class GitStatusBar {
     this.modalOverlay = document.getElementById('git-modal-overlay')!
     this.modalContent = document.getElementById('git-modal-content')!
     this.modalCloseBtn = document.getElementById('git-modal-close')!
+    this.gitIcon = this.statusBar.querySelector('.git-icon')!
     this.onOpenHistory = onOpenHistory
+    this.onOpenChanges = onOpenChanges
 
     this.setupEventListeners()
   }
@@ -1086,11 +1348,25 @@ class GitStatusBar {
         this.openHistory()
       }
     })
+
+    // Click git icon or dirty state to open changes overlay
+    this.gitIcon.addEventListener('click', () => this.openChanges())
+    this.stateEl.addEventListener('click', () => {
+      if (this.currentStatus?.isDirty) {
+        this.openChanges()
+      }
+    })
   }
 
   private openHistory(): void {
     if (this.onOpenHistory) {
       this.onOpenHistory(this.currentPath)
+    }
+  }
+
+  private openChanges(): void {
+    if (this.onOpenChanges && this.currentStatus?.isDirty) {
+      this.onOpenChanges(this.currentPath)
     }
   }
 
@@ -1274,6 +1550,7 @@ class FileBrowser {
   private infoModal: InfoModal
   private searchOverlay: SearchOverlay
   private gitHistoryOverlay: GitHistoryOverlay
+  private gitChangesOverlay: GitChangesOverlay
   private gitStatusBar: GitStatusBar
   private highlightedFile: string | null = null
 
@@ -1292,7 +1569,11 @@ class FileBrowser {
       (path, highlightFile) => this.handleSearchNavigation(path, highlightFile)
     )
     this.gitHistoryOverlay = new GitHistoryOverlay((hash) => this.copyToClipboard(hash, 'Hash copied'))
-    this.gitStatusBar = new GitStatusBar((path) => this.gitHistoryOverlay.open(path))
+    this.gitChangesOverlay = new GitChangesOverlay()
+    this.gitStatusBar = new GitStatusBar(
+      (path) => this.gitHistoryOverlay.open(path),
+      (path) => this.gitChangesOverlay.open(path)
+    )
 
     this.setupEventListeners()
     this.setupPullToRefresh()

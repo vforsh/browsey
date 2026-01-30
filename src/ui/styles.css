@@ -950,6 +950,13 @@ body {
   justify-content: center;
   flex-shrink: 0;
   color: var(--accent);
+  cursor: pointer;
+  border-radius: 6px;
+  transition: opacity 0.15s;
+}
+
+.git-icon:hover {
+  opacity: 0.7;
 }
 
 .git-icon::before {
@@ -1021,6 +1028,12 @@ body {
 
 .git-state.dirty {
   color: #ffd93d;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+
+.git-state.dirty:hover {
+  opacity: 0.7;
 }
 
 /* Git Modal */
@@ -1305,4 +1318,227 @@ body {
 .git-modal-history-btn svg {
   width: 16px;
   height: 16px;
+}
+
+/* Git Changes Overlay */
+.git-changes-overlay {
+  position: fixed;
+  inset: 0;
+  background: var(--bg-primary);
+  z-index: 3000;
+  display: flex;
+  flex-direction: column;
+  animation: viewerFadeIn 0.2s ease;
+}
+
+.git-changes-overlay[hidden] {
+  display: none;
+}
+
+.git-changes-modal {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  overflow: hidden;
+}
+
+.git-changes-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  padding-top: calc(8px + var(--safe-top));
+  background: var(--bg-secondary);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  flex-shrink: 0;
+}
+
+.git-changes-title {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.git-changes-content {
+  flex: 1;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 8px 0;
+}
+
+.git-changes-loading,
+.git-changes-empty,
+.git-changes-error {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px 16px;
+  color: var(--text-secondary);
+  font-size: 14px;
+}
+
+.git-changes-error {
+  color: var(--danger);
+}
+
+/* Changes section (Staged / Modified / Untracked) */
+.git-changes-section {
+  margin-bottom: 4px;
+}
+
+.git-changes-section-header {
+  display: flex;
+  align-items: center;
+  padding: 10px 16px;
+  gap: 8px;
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.1s;
+}
+
+.git-changes-section-header:hover {
+  background: var(--bg-hover);
+}
+
+.git-changes-section-chevron {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  color: var(--text-secondary);
+  transition: transform 0.15s;
+}
+
+.git-changes-section-chevron.collapsed {
+  transform: rotate(-90deg);
+}
+
+.git-changes-section-label {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.git-changes-section-label.staged {
+  color: #6bcb77;
+}
+
+.git-changes-section-label.unstaged {
+  color: #ffd93d;
+}
+
+.git-changes-section-label.untracked {
+  color: var(--text-secondary);
+}
+
+.git-changes-section-count {
+  font-size: 11px;
+  color: var(--text-secondary);
+  background: rgba(255, 255, 255, 0.08);
+  padding: 1px 7px;
+  border-radius: 10px;
+}
+
+.git-changes-section-body {
+  overflow: hidden;
+}
+
+.git-changes-section-body.collapsed,
+.git-changes-tree-children.collapsed {
+  display: none;
+}
+
+/* Tree view items */
+.git-changes-tree-item {
+  display: flex;
+  align-items: center;
+  padding: 6px 16px;
+  gap: 6px;
+  min-height: 32px;
+  cursor: default;
+}
+
+.git-changes-tree-item.directory {
+  cursor: pointer;
+  user-select: none;
+}
+
+.git-changes-tree-item.directory:hover {
+  background: var(--bg-hover);
+}
+
+.git-changes-tree-indent {
+  width: 16px;
+  flex-shrink: 0;
+}
+
+.git-changes-tree-chevron {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  color: var(--text-secondary);
+  transition: transform 0.15s;
+}
+
+.git-changes-tree-chevron.collapsed {
+  transform: rotate(-90deg);
+}
+
+.git-changes-tree-icon {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+
+.git-changes-tree-icon.folder {
+  color: var(--folder-color);
+}
+
+.git-changes-tree-icon.file {
+  color: var(--text-secondary);
+}
+
+.git-changes-tree-name {
+  flex: 1;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.git-changes-tree-name.directory {
+  color: var(--folder-color);
+}
+
+.git-changes-tree-status {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+.git-changes-tree-status.M {
+  color: #ffd93d;
+  background: rgba(255, 217, 61, 0.12);
+}
+
+.git-changes-tree-status.A {
+  color: #6bcb77;
+  background: rgba(107, 203, 119, 0.12);
+}
+
+.git-changes-tree-status.D {
+  color: #ff6b6b;
+  background: rgba(255, 107, 107, 0.12);
+}
+
+.git-changes-tree-status.R {
+  color: #4d9fff;
+  background: rgba(77, 159, 255, 0.12);
+}
+
+.git-changes-tree-status.untracked {
+  color: var(--text-secondary);
+  background: rgba(255, 255, 255, 0.06);
 }

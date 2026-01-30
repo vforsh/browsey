@@ -97,3 +97,15 @@ export type GitLogResponse = {
   commits: CommitInfo[]
   hasMore: boolean
 }
+
+export type GitChangeFile = {
+  path: string           // relative to repo root
+  indexStatus: string    // 'M', 'A', 'D', 'R', '?', ' '
+  workTreeStatus: string // 'M', 'D', '?', ' '
+}
+
+export type GitChangesResponse = {
+  staged: GitChangeFile[]
+  unstaged: GitChangeFile[]
+  untracked: GitChangeFile[]
+}

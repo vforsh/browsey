@@ -3,8 +3,8 @@ import { basename, extname, join, relative } from 'path'
 import { getMimeType } from './utils/mime.js'
 import { createIgnoreMatcher, type IgnoreMatcher } from './ignore.js'
 import { resolveSafePath } from './security.js'
-import { getGitStatus, getGitLog } from './git.js'
-import type { ApiRoutesOptions, FileItem, ListResponse, SearchResult, SearchResponse, GitStatusResponse, GitLogResponse } from './types.js'
+import { getGitStatus, getGitLog, getGitChanges } from './git.js'
+import type { ApiRoutesOptions, FileItem, ListResponse, SearchResult, SearchResponse, GitStatusResponse, GitLogResponse, GitChangesResponse } from './types.js'
 
 const JSON_HEADERS = {
   'Content-Type': 'application/json',
@@ -90,6 +90,9 @@ export async function handleApiRequest(
   }
   if (route === '/git/log') {
     return handleGitLog(url, options)
+  }
+  if (route === '/git/changes') {
+    return handleGitChanges(url, options)
   }
 
   return jsonResponse({ error: 'Not found' }, { status: 404 })
@@ -479,6 +482,23 @@ async function handleGitLog(url: URL, options: ApiRoutesOptions): Promise<Respon
   try {
     const result = await getGitLog(safePath.fullPath, limit, skip)
     const response: GitLogResponse = result
+    return jsonResponse(response)
+  } catch {
+    return jsonResponse({ error: 'Internal server error' }, { status: 500 })
+  }
+}
+
+async function handleGitChanges(url: URL, options: ApiRoutesOptions): Promise<Response> {
+  const requestPath = url.searchParams.get('path') || '/'
+  const safePath = resolveSafePath(options.root, requestPath)
+
+  if (!safePath) {
+    return jsonResponse({ error: 'Access denied: Invalid path' }, { status: 403 })
+  }
+
+  try {
+    const result = await getGitChanges(safePath.fullPath)
+    const response: GitChangesResponse = result
     return jsonResponse(response)
   } catch {
     return jsonResponse({ error: 'Internal server error' }, { status: 500 })
