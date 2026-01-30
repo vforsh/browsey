@@ -1890,3 +1890,29 @@ body {
   background: var(--bg-hover);
   border-color: rgba(255, 255, 255, 0.2);
 }
+
+/* Mobile: move header and git status bar to bottom */
+@media (max-width: 767px) {
+  /* Move bars to bottom */
+  .file-list { order: -1; }
+  .git-status-bar { order: 1; }
+  .header { order: 2; }
+
+  /* Swap borders: top instead of bottom */
+  .header {
+    border-bottom: none;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    padding-top: 8px;
+    padding-bottom: calc(8px + var(--safe-bottom));
+  }
+
+  .git-status-bar {
+    border-bottom: none;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+  }
+
+  /* Content area needs safe-area-top for the notch/status bar */
+  .file-list {
+    padding-top: var(--safe-top);
+  }
+}
