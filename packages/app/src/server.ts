@@ -215,8 +215,6 @@ export async function startAppServer(
       console.log(`  \x1b[2mNetwork:\x1b[0m ${networkUrl}`)
     }
     console.log()
-    console.log(`  \x1b[2mAPI:\x1b[0m     ${apiBaseUrl || '(configure in browser)'}`)
-    console.log()
 
     if (options.showQR && networkUrl) {
       console.log('  \x1b[2mScan QR code to open on mobile:\x1b[0m')
