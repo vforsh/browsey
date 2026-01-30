@@ -1192,6 +1192,9 @@ body {
   flex-direction: column;
   flex: 1;
   overflow: hidden;
+  width: 100%;
+  max-width: 900px;
+  margin: 0 auto;
 }
 
 .git-history-header {
@@ -1340,6 +1343,9 @@ body {
   flex-direction: column;
   flex: 1;
   overflow: hidden;
+  width: 100%;
+  max-width: 900px;
+  margin: 0 auto;
 }
 
 .git-changes-header {
@@ -1786,54 +1792,101 @@ body {
   background: rgba(255, 255, 255, 0.25);
 }
 
-/* Server Indicator (dynamic mode) */
-.server-indicator {
+/* Settings Modal */
+.settings-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.7);
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  padding: 6px 16px;
-  background: var(--bg-secondary);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-  flex-shrink: 0;
-  cursor: pointer;
-  transition: background 0.15s;
+  z-index: 1000;
+  padding: 16px;
 }
 
-.server-indicator[hidden] {
+.settings-overlay[hidden] {
   display: none;
 }
 
-.server-indicator:hover {
-  background: var(--bg-hover);
+.settings-modal {
+  background: var(--bg-secondary);
+  border-radius: 12px;
+  width: 100%;
+  max-width: 400px;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
-.server-indicator-dot {
-  width: 6px;
-  height: 6px;
+.settings-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  flex-shrink: 0;
+}
+
+.settings-title {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.settings-content {
+  padding: 16px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.settings-section-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 10px;
+}
+
+.settings-server-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.settings-server-dot {
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
   background: #6bcb77;
   flex-shrink: 0;
 }
 
-.server-indicator-url {
-  font-size: 12px;
-  color: var(--text-secondary);
+.settings-server-url {
+  flex: 1;
+  font-size: 13px;
+  font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Fira Code', monospace;
+  color: var(--text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  min-width: 0;
 }
 
-.server-indicator-change {
-  font-size: 11px;
-  color: var(--accent);
+.settings-server-change {
   flex-shrink: 0;
+  padding: 6px 12px;
+  background: var(--bg-primary);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  color: var(--accent);
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
 }
 
-@media (min-width: 768px) {
-  .server-indicator {
-    max-width: 900px;
-    margin: 0 auto;
-    width: 100%;
-  }
+.settings-server-change:hover {
+  background: var(--bg-hover);
+  border-color: rgba(255, 255, 255, 0.2);
 }

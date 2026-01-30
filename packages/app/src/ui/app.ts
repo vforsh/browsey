@@ -655,6 +655,82 @@ class InfoModal {
   }
 }
 
+class SettingsModal {
+  private overlay: HTMLElement
+  private content: HTMLElement
+  private closeBtn: HTMLElement
+  private dynamicMode: boolean
+  private onServerChange: () => void
+
+  constructor(dynamicMode: boolean, onServerChange: () => void) {
+    this.dynamicMode = dynamicMode
+    this.onServerChange = onServerChange
+    this.overlay = document.getElementById('settings-overlay')!
+    this.content = document.getElementById('settings-content')!
+    this.closeBtn = document.getElementById('settings-close')!
+
+    this.setupEventListeners()
+  }
+
+  private setupEventListeners(): void {
+    this.closeBtn.addEventListener('click', (e) => {
+      e.stopPropagation()
+      this.close()
+    })
+    this.overlay.addEventListener('click', (event) => {
+      const modal = this.overlay.querySelector('.settings-modal')
+      if (modal && modal.contains(event.target as Node)) return
+      this.close()
+    })
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && !this.overlay.hidden) {
+        e.stopPropagation()
+        this.close()
+      }
+    })
+  }
+
+  open(): void {
+    this.render()
+    this.overlay.hidden = false
+  }
+
+  close(): void {
+    this.overlay.hidden = true
+    this.content.innerHTML = ''
+  }
+
+  private render(): void {
+    const serverUrl = window.__BROWSEY_API_BASE__ || '—'
+    const changeBtn = this.dynamicMode
+      ? `<button class="settings-server-change" id="settings-change-server">Change</button>`
+      : ''
+
+    this.content.innerHTML = `
+      <div class="settings-section-title">Server</div>
+      <div class="settings-server-row">
+        <span class="settings-server-dot"></span>
+        <span class="settings-server-url">${this.escapeHtml(serverUrl)}</span>
+        ${changeBtn}
+      </div>
+    `
+
+    if (this.dynamicMode) {
+      document.getElementById('settings-change-server')?.addEventListener('click', () => {
+        this.close()
+        this.onServerChange()
+      })
+    }
+  }
+
+  private escapeHtml(text: string): string {
+    const div = document.createElement('div')
+    div.textContent = text
+    return div.innerHTML
+  }
+}
+
 class SearchOverlay {
   private overlay: HTMLElement
   private input: HTMLInputElement
@@ -1273,7 +1349,7 @@ class GitChangesOverlay {
         <svg class="git-changes-tree-icon folder" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
         </svg>
-        <span class="git-changes-tree-name directory">${this.escapeHtml(node.name)}/</span>
+        <span class="git-changes-tree-name directory">${this.escapeHtml(node.name)}</span>
       </div>
       <div class="git-changes-tree-children">
         ${childrenHtml}
@@ -1699,7 +1775,6 @@ class ConnectScreen {
     // Hide main UI elements
     document.querySelector('.header')?.setAttribute('hidden', '')
     document.getElementById('git-status-bar')?.setAttribute('hidden', '')
-    document.getElementById('server-indicator')?.setAttribute('hidden', '')
     document.getElementById('file-list')?.setAttribute('hidden', '')
 
     this.screen.hidden = false
@@ -1830,6 +1905,7 @@ class FileBrowser {
   private gitHistoryOverlay: GitHistoryOverlay
   private gitChangesOverlay: GitChangesOverlay
   private gitStatusBar: GitStatusBar
+  private settingsModal: SettingsModal
   private highlightedFile: string | null = null
   private dynamicMode: boolean
 
@@ -1854,12 +1930,10 @@ class FileBrowser {
       (path) => this.gitHistoryOverlay.open(path),
       (path) => this.gitChangesOverlay.open(path)
     )
+    this.settingsModal = new SettingsModal(this.dynamicMode, () => this.handleServerChange())
 
     this.setupEventListeners()
     this.setupPullToRefresh()
-    if (this.dynamicMode) {
-      this.setupServerIndicator()
-    }
     window.addEventListener('popstate', () => this.handlePopState())
     this.loadFromLocation()
   }
@@ -1889,7 +1963,7 @@ class FileBrowser {
 
   private setupEventListeners(): void {
     document.getElementById('btn-back')?.addEventListener('click', () => this.goUp())
-    document.getElementById('btn-refresh')?.addEventListener('click', () => this.refresh())
+    document.getElementById('btn-settings')?.addEventListener('click', () => this.settingsModal.open())
     document.getElementById('btn-search')?.addEventListener('click', () => {
       this.searchOverlay.open(this.currentPath)
     })
@@ -1972,27 +2046,14 @@ class FileBrowser {
     )
   }
 
-  private setupServerIndicator(): void {
-    const indicator = document.getElementById('server-indicator')
-    const urlEl = document.getElementById('server-indicator-url')
-    if (!indicator || !urlEl) return
+  private handleServerChange(): void {
+    ConnectScreen.clearUrl()
+    window.__BROWSEY_API_BASE__ = ''
 
-    indicator.hidden = false
-    urlEl.textContent = window.__BROWSEY_API_BASE__
-
-    indicator.addEventListener('click', () => {
-      ConnectScreen.clearUrl()
-      window.__BROWSEY_API_BASE__ = ''
-      indicator.hidden = true
-
-      const connectScreen = new ConnectScreen((url) => {
-        window.__BROWSEY_API_BASE__ = url
-        urlEl.textContent = url
-        indicator.hidden = false
-        this.navigate('/')
-      })
-      connectScreen.show()
+    const connectScreen = new ConnectScreen(() => {
+      this.navigate('/')
     })
+    connectScreen.show()
   }
 
   async navigate(
