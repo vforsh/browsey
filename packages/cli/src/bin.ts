@@ -31,7 +31,6 @@ const apiCommand = new Command('api')
   .option('--no-readonly', 'Allow file modifications')
   .option('--hidden', 'Show hidden files')
   .option('--no-qr', 'Do not display QR code')
-  .option('--no-bonjour', 'Disable Bonjour service advertising')
   .option('--no-https', 'Disable HTTPS')
   .option('--https-cert <path>', 'Path to TLS certificate (PEM)', './certs/browsey.pem')
   .option('--https-key <path>', 'Path to TLS private key (PEM)', './certs/browsey-key.pem')
@@ -66,7 +65,6 @@ const apiCommand = new Command('api')
         readonly: (options.readonly as boolean) ?? true,
         showHidden: (options.hidden as boolean) ?? false,
         showQR: (options.qr as boolean) ?? true,
-        bonjour: (options.bonjour as boolean) ?? true,
         ignorePatterns: parseIgnorePatterns(options.ignore as string | undefined),
         version: VERSION,
         https: httpsEnabled,
@@ -156,7 +154,6 @@ const startCommand = new Command('start')
   .option('--no-readonly', 'Allow file modifications')
   .option('--hidden', 'Show hidden files')
   .option('--no-qr', 'Do not display QR code')
-  .option('--no-bonjour', 'Disable Bonjour service advertising')
   .option('--no-https', 'Disable HTTPS')
   .option('--https-cert <path>', 'Path to TLS certificate (PEM)', './certs/browsey.pem')
   .option('--https-key <path>', 'Path to TLS private key (PEM)', './certs/browsey-key.pem')
@@ -209,7 +206,6 @@ const startCommand = new Command('start')
         readonly: (options.readonly as boolean) ?? true,
         showHidden: (options.hidden as boolean) ?? false,
         showQR: false,
-        bonjour: (options.bonjour as boolean) ?? true,
         ignorePatterns: parseIgnorePatterns(options.ignore as string | undefined),
         version: VERSION,
         https: httpsEnabled,

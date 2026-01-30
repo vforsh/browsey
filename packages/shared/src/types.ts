@@ -5,7 +5,6 @@ export type ApiServerOptions = {
   readonly: boolean
   showHidden: boolean
   showQR: boolean
-  bonjour: boolean
   ignorePatterns: string[]
   version: string
   https: boolean
@@ -60,7 +59,6 @@ export interface InstanceInfo {
   apiUrl?: string       // For app: the --api URL
   startedAt: string
   readonly: boolean
-  bonjour: boolean
   version: string
 }
 

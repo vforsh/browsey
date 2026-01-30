@@ -4,7 +4,7 @@
   "workspaces": ["packages/*"],
   "scripts": {
     "build": "bun run scripts/build.ts",
-    "dev:api": "bun --watch packages/cli/src/bin.ts api --no-bonjour",
+    "dev:api": "bun --watch packages/cli/src/bin.ts api",
     "dev:app": "bun --watch packages/cli/src/bin.ts app --api http://localhost:4200",
     "typecheck": "tsc --build"
   },

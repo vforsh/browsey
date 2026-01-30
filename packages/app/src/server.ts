@@ -237,7 +237,6 @@ export async function startAppServer(
     apiUrl: apiBaseUrl || undefined,
     startedAt: new Date().toISOString(),
     readonly: true,
-    bonjour: false,
     version: options.version,
   })
 

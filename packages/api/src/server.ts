@@ -3,7 +3,6 @@ import { resolve } from 'path'
 import { existsSync } from 'fs'
 import qrcode from 'qrcode-terminal'
 import { handleApiRequest } from './routes.js'
-import { advertiseService } from './bonjour.js'
 import { createReloadSSEResponse, startWatcher, stopWatcher } from './live-reload.js'
 import { withCors, corsPreflightResponse } from '@vforsh/browsey-shared'
 import type { ApiServerOptions, InstanceInfo } from '@vforsh/browsey-shared'
@@ -120,23 +119,6 @@ export async function startApiServer(
     }
   }
 
-  // Start Bonjour advertising for iOS app discovery
-  let stopBonjour: (() => void) | null = null
-  if (options.bonjour) {
-    try {
-      stopBonjour = advertiseService(options.port, rootPath)
-      if (!options.quiet) {
-        console.log('  \x1b[2mBonjour:\x1b[0m  Advertising as _browsey._tcp')
-        console.log()
-      }
-    } catch {
-      if (!options.quiet) {
-        console.log('  \x1b[33mWarning:\x1b[0m  Could not start Bonjour advertising')
-        console.log()
-      }
-    }
-  }
-
   if (!options.quiet) {
     console.log('  \x1b[2mPress Ctrl+C to stop\x1b[0m')
     console.log()
@@ -151,15 +133,11 @@ export async function startApiServer(
     rootPath,
     startedAt: new Date().toISOString(),
     readonly: options.readonly,
-    bonjour: options.bonjour,
     version: options.version,
   })
 
   const shutdown = () => {
     callbacks.deregister(process.pid)
-    if (stopBonjour) {
-      stopBonjour()
-    }
     if (options.watch) {
       stopWatcher()
     }

@@ -44,8 +44,7 @@ browsey/
     │       ├── server.ts     # API Bun server with CORS
     │       ├── routes.ts     # API route handlers
     │       ├── git.ts        # Git operations
-    │       ├── live-reload.ts # SSE live reload
-    │       └── bonjour.ts    # mDNS service advertising
+    │       └── live-reload.ts # SSE live reload
     ├── app/                  # @vforsh/browsey-app
     │   ├── package.json
     │   ├── tsconfig.json
@@ -86,7 +85,7 @@ browsey stop [target]                 # Stop instances (alias: kill)
 ```
 
 ### `browsey api` options
-`-p/--port` (default 4200), `-h/--host` (default 0.0.0.0), `-i/--ignore`, `--no-readonly`, `--hidden`, `--no-qr`, `--no-bonjour`, `--no-https`, `--https-cert`, `--https-key`, `-w/--watch`, `--cors <origin>` (default `*`)
+`-p/--port` (default 4200), `-h/--host` (default 0.0.0.0), `-i/--ignore`, `--no-readonly`, `--hidden`, `--no-qr`, `--no-https`, `--https-cert`, `--https-key`, `-w/--watch`, `--cors <origin>` (default `*`)
 
 ### `browsey app` options
 `-p/--port` (default 4201), `-h/--host` (default 0.0.0.0), `--api <url>` (**required**), `--open`, `--no-https`, `--https-cert`, `--https-key`, `--no-qr`
@@ -161,7 +160,7 @@ browsey stop [target]                 # Stop instances (alias: kill)
 ## Dependencies
 
 **shared**: (no external deps)
-**api**: `@vforsh/browsey-shared`, `bonjour-service`, `qrcode-terminal`
+**api**: `@vforsh/browsey-shared`, `qrcode-terminal`
 **app**: `@vforsh/browsey-shared`, `highlight.js`, `lucide-static`, `marked`, `marked-highlight`, `qrcode-terminal`
 **cli**: `@vforsh/browsey-shared`, `@vforsh/browsey-api`, `@vforsh/browsey-app`, `commander`, `get-port`
 **Dev** (root): `@types/qrcode-terminal`, `@types/bun`, `typescript`
