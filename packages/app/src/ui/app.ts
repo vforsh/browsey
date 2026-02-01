@@ -480,7 +480,7 @@ class FileViewer {
     if (data.type === 'text') {
       this.renderText(data.content, data.extension, data.filename)
     } else if (data.type === 'image') {
-      this.renderImage(data.url, data.filename)
+      this.renderImage(data.url, data.filename, data.size)
     }
   }
 
@@ -510,24 +510,53 @@ class FileViewer {
     this.updateControlButtons()
   }
 
-  private renderImage(url: string, filename: string): void {
+  private renderImage(url: string, filename: string, size: number): void {
     this.currentContentType = 'image'
     const imgSrc = apiUrl(url)
+    const hasNav = this.imageNav !== null
+    const prevDisabled = !hasNav || this.imageNav!.index <= 0
+    const nextDisabled = !hasNav || this.imageNav!.index >= this.imageNav!.paths.length - 1
     this.activeTarget.content.innerHTML = `
       <div class="viewer-image">
+        ${hasNav ? `<button class="image-nav-overlay image-nav-prev" aria-label="Previous image"${prevDisabled ? ' disabled' : ''}>
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+        </button>` : ''}
         <img src="${imgSrc}" alt="${this.escapeHtml(filename)}" />
+        ${hasNav ? `<button class="image-nav-overlay image-nav-next" aria-label="Next image"${nextDisabled ? ' disabled' : ''}>
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+        </button>` : ''}
+        <div class="image-info" id="image-info"></div>
       </div>
     `
+
+    if (hasNav) {
+      const prevBtn = this.activeTarget.content.querySelector('.image-nav-prev')
+      const nextBtn = this.activeTarget.content.querySelector('.image-nav-next')
+      prevBtn?.addEventListener('click', () => this.navigatePrev())
+      nextBtn?.addEventListener('click', () => this.navigateNext())
+    }
+
     const image = this.activeTarget.content.querySelector('img')
+    const infoEl = this.activeTarget.content.querySelector('.image-info')
     if (!image) return
     image.addEventListener('load', () => {
       const width = image.naturalWidth
       const height = image.naturalHeight
       if (!width || !height) return
       this.activeTarget.filename.textContent = `${filename} • ${width}x${height}`
+      if (infoEl) {
+        infoEl.textContent = `${width} × ${height} · ${this.formatSize(size)}`
+      }
     }, { once: true })
 
     this.updateControlButtons()
+  }
+
+  private formatSize(bytes: number): string {
+    if (bytes < 1024) return `${bytes} B`
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+    if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+    return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`
   }
 
   private renderError(message: string): void {
