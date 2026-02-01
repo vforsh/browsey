@@ -81,9 +81,54 @@
     </div>
   </div>
 
-  <main class="file-list" id="file-list">
-    <div class="loading" id="loading">Loading...</div>
-  </main>
+  <div class="layout-container" id="layout-container">
+    <main class="file-list" id="file-list">
+      <div class="loading" id="loading">Loading...</div>
+    </main>
+    <aside class="preview-pane" id="preview-pane" hidden>
+      <div class="preview-header" id="preview-header">
+        <div class="preview-filename" id="preview-filename"></div>
+        <div class="preview-actions">
+          <button class="btn-icon" id="preview-font-decrease" aria-label="Decrease font size" hidden>
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+              <text x="3" y="18" font-size="16" font-weight="600" fill="currentColor">A</text>
+              <text x="15" y="18" font-size="14" font-weight="600" fill="currentColor">−</text>
+            </svg>
+          </button>
+          <button class="btn-icon" id="preview-font-increase" aria-label="Increase font size" hidden>
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+              <text x="3" y="18" font-size="16" font-weight="600" fill="currentColor">A</text>
+              <text x="15" y="18" font-size="14" font-weight="600" fill="currentColor">+</text>
+            </svg>
+          </button>
+          <button class="btn-icon" id="preview-prev" aria-label="Previous" hidden>
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M15 18l-6-6 6-6"/>
+            </svg>
+          </button>
+          <button class="btn-icon" id="preview-next" aria-label="Next" hidden>
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M9 18l6-6-6-6"/>
+            </svg>
+          </button>
+          <button class="btn-icon" id="preview-download" aria-label="Download">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+              <polyline points="7 10 12 15 17 10"/>
+              <line x1="12" y1="15" x2="12" y2="3"/>
+            </svg>
+          </button>
+          <button class="btn-icon" id="preview-close" aria-label="Close preview">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="18" y1="6" x2="6" y2="18"/>
+              <line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+      <div class="preview-content" id="preview-content"></div>
+    </aside>
+  </div>
 
   <div class="toast" id="toast" hidden></div>
 

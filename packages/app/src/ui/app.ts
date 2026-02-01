@@ -89,6 +89,23 @@ type ImageNavContext = {
   index: number
 }
 
+type ViewerTarget = {
+  container: HTMLElement
+  content: HTMLElement
+  filename: HTMLElement
+  downloadBtn: HTMLElement
+  closeBtn: HTMLElement
+  prevBtn: HTMLButtonElement
+  nextBtn: HTMLButtonElement
+  fontDecreaseBtn: HTMLButtonElement
+  fontIncreaseBtn: HTMLButtonElement
+  isOverlay: boolean
+}
+
+function isTwoPaneMode(): boolean {
+  return window.matchMedia('(min-width: 1024px)').matches
+}
+
 // Extensions that can be viewed
 const VIEWABLE_TEXT_EXTENSIONS = new Set([
   'txt', 'md', 'markdown', 'json', 'js', 'jsx', 'ts', 'tsx', 'mjs', 'cjs',
@@ -208,15 +225,9 @@ function isIosStandalone(): boolean {
 }
 
 class FileViewer {
-  private overlay: HTMLElement
-  private content: HTMLElement
-  private filename: HTMLElement
-  private downloadBtn: HTMLElement
-  private closeBtn: HTMLElement
-  private prevBtn: HTMLButtonElement
-  private nextBtn: HTMLButtonElement
-  private fontDecreaseBtn: HTMLButtonElement
-  private fontIncreaseBtn: HTMLButtonElement
+  private overlayTarget: ViewerTarget
+  private previewTarget: ViewerTarget
+  private activeTarget: ViewerTarget
   private currentPath: string | null = null
   private imageNav: ImageNavContext | null = null
   private currentContentType: 'text' | 'image' | null = null
@@ -227,15 +238,33 @@ class FileViewer {
   private onNavigate?: (path: string) => void
 
   constructor(onClose?: () => void, onNavigate?: (path: string) => void) {
-    this.overlay = document.getElementById('viewer-overlay')!
-    this.content = document.getElementById('viewer-content')!
-    this.filename = document.getElementById('viewer-filename')!
-    this.downloadBtn = document.getElementById('viewer-download')!
-    this.closeBtn = document.getElementById('viewer-close')!
-    this.prevBtn = document.getElementById('viewer-prev') as HTMLButtonElement
-    this.nextBtn = document.getElementById('viewer-next') as HTMLButtonElement
-    this.fontDecreaseBtn = document.getElementById('viewer-font-decrease') as HTMLButtonElement
-    this.fontIncreaseBtn = document.getElementById('viewer-font-increase') as HTMLButtonElement
+    this.overlayTarget = {
+      container: document.getElementById('viewer-overlay')!,
+      content: document.getElementById('viewer-content')!,
+      filename: document.getElementById('viewer-filename')!,
+      downloadBtn: document.getElementById('viewer-download')!,
+      closeBtn: document.getElementById('viewer-close')!,
+      prevBtn: document.getElementById('viewer-prev') as HTMLButtonElement,
+      nextBtn: document.getElementById('viewer-next') as HTMLButtonElement,
+      fontDecreaseBtn: document.getElementById('viewer-font-decrease') as HTMLButtonElement,
+      fontIncreaseBtn: document.getElementById('viewer-font-increase') as HTMLButtonElement,
+      isOverlay: true,
+    }
+
+    this.previewTarget = {
+      container: document.getElementById('preview-pane')!,
+      content: document.getElementById('preview-content')!,
+      filename: document.getElementById('preview-filename')!,
+      downloadBtn: document.getElementById('preview-download')!,
+      closeBtn: document.getElementById('preview-close')!,
+      prevBtn: document.getElementById('preview-prev') as HTMLButtonElement,
+      nextBtn: document.getElementById('preview-next') as HTMLButtonElement,
+      fontDecreaseBtn: document.getElementById('preview-font-decrease') as HTMLButtonElement,
+      fontIncreaseBtn: document.getElementById('preview-font-increase') as HTMLButtonElement,
+      isOverlay: false,
+    }
+
+    this.activeTarget = this.overlayTarget
     this.onClose = onClose
     this.onNavigate = onNavigate
 
@@ -244,21 +273,29 @@ class FileViewer {
     this.setupMarked()
   }
 
+  private bindTargetEvents(target: ViewerTarget): void {
+    target.closeBtn.addEventListener('click', () => this.close())
+    target.downloadBtn.addEventListener('click', () => this.download())
+    target.prevBtn.addEventListener('click', () => this.navigatePrev())
+    target.nextBtn.addEventListener('click', () => this.navigateNext())
+    target.fontDecreaseBtn.addEventListener('click', () => this.decreaseFontSize())
+    target.fontIncreaseBtn.addEventListener('click', () => this.increaseFontSize())
+  }
+
   private setupEventListeners(): void {
-    this.closeBtn.addEventListener('click', () => this.close())
-    this.downloadBtn.addEventListener('click', () => this.download())
-    this.prevBtn.addEventListener('click', () => this.navigatePrev())
-    this.nextBtn.addEventListener('click', () => this.navigateNext())
-    this.fontDecreaseBtn.addEventListener('click', () => this.decreaseFontSize())
-    this.fontIncreaseBtn.addEventListener('click', () => this.increaseFontSize())
-    this.overlay.addEventListener('click', (event) => {
-      if (event.target !== this.overlay) return
+    this.bindTargetEvents(this.overlayTarget)
+    this.bindTargetEvents(this.previewTarget)
+
+    this.overlayTarget.container.addEventListener('click', (event) => {
+      if (event.target !== this.overlayTarget.container) return
       this.close()
     })
 
     // Close on ESC, navigate on arrows, font size with +/-
     document.addEventListener('keydown', (e) => {
-      if (this.overlay.hidden) return
+      const overlayVisible = !this.overlayTarget.container.hidden
+      const previewVisible = !this.previewTarget.container.hidden
+      if (!overlayVisible && !previewVisible) return
       if (e.key === 'Escape') {
         this.close()
       } else if (e.key === 'ArrowLeft') {
@@ -280,15 +317,15 @@ class FileViewer {
       }
     })
 
-    // Swipe handling for mobile
+    // Swipe handling for mobile (overlay only)
     let touchStartX = 0
     let touchStartY = 0
-    this.overlay.addEventListener('touchstart', (e) => {
+    this.overlayTarget.container.addEventListener('touchstart', (e) => {
       touchStartX = e.touches[0]?.clientX ?? 0
       touchStartY = e.touches[0]?.clientY ?? 0
     }, { passive: true })
 
-    this.overlay.addEventListener('touchend', (e) => {
+    this.overlayTarget.container.addEventListener('touchend', (e) => {
       const touchEndX = e.changedTouches[0]?.clientX ?? 0
       const touchEndY = e.changedTouches[0]?.clientY ?? 0
       const deltaX = touchEndX - touchStartX
@@ -305,7 +342,7 @@ class FileViewer {
       }
 
       // Swipe down to close
-      if (deltaY > 100 && this.content.scrollTop === 0) {
+      if (deltaY > 100 && this.activeTarget.content.scrollTop === 0) {
         this.close()
       }
     }, { passive: true })
@@ -326,10 +363,10 @@ class FileViewer {
   }
 
   private hideAllControlButtons(): void {
-    this.prevBtn.hidden = true
-    this.nextBtn.hidden = true
-    this.fontDecreaseBtn.hidden = true
-    this.fontIncreaseBtn.hidden = true
+    this.activeTarget.prevBtn.hidden = true
+    this.activeTarget.nextBtn.hidden = true
+    this.activeTarget.fontDecreaseBtn.hidden = true
+    this.activeTarget.fontIncreaseBtn.hidden = true
   }
 
   private updateControlButtons(): void {
@@ -338,16 +375,16 @@ class FileViewer {
 
     // Image navigation: show only for images with nav context
     const hasImageNav = isImage && this.imageNav !== null
-    this.prevBtn.hidden = !hasImageNav
-    this.nextBtn.hidden = !hasImageNav
+    this.activeTarget.prevBtn.hidden = !hasImageNav
+    this.activeTarget.nextBtn.hidden = !hasImageNav
     if (hasImageNav) {
-      this.prevBtn.disabled = this.imageNav!.index <= 0
-      this.nextBtn.disabled = this.imageNav!.index >= this.imageNav!.paths.length - 1
+      this.activeTarget.prevBtn.disabled = this.imageNav!.index <= 0
+      this.activeTarget.nextBtn.disabled = this.imageNav!.index >= this.imageNav!.paths.length - 1
     }
 
     // Font controls: show only for text content
-    this.fontDecreaseBtn.hidden = !isText
-    this.fontIncreaseBtn.hidden = !isText
+    this.activeTarget.fontDecreaseBtn.hidden = !isText
+    this.activeTarget.fontIncreaseBtn.hidden = !isText
     if (isText) {
       this.updateFontButtons()
     }
@@ -389,15 +426,15 @@ class FileViewer {
 
   private applyFontSize(): void {
     const size = this.getCurrentFontSize()
-    const textContent = this.content.querySelector('.viewer-text, .viewer-markdown') as HTMLElement | null
+    const textContent = this.activeTarget.content.querySelector('.viewer-text, .viewer-markdown') as HTMLElement | null
     if (textContent) {
       textContent.style.fontSize = `${size}px`
     }
   }
 
   private updateFontButtons(): void {
-    this.fontDecreaseBtn.disabled = this.currentFontLevel <= 1
-    this.fontIncreaseBtn.disabled = this.currentFontLevel >= this.FONT_SIZES.length
+    this.activeTarget.fontDecreaseBtn.disabled = this.currentFontLevel <= 1
+    this.activeTarget.fontIncreaseBtn.disabled = this.currentFontLevel >= this.FONT_SIZES.length
   }
 
   private setupMarked(): void {
@@ -415,13 +452,14 @@ class FileViewer {
     )
   }
 
-  async open(path: string, imageNav?: ImageNavContext): Promise<void> {
+  async open(path: string, imageNav?: ImageNavContext, inline = false): Promise<void> {
+    this.activeTarget = inline ? this.previewTarget : this.overlayTarget
     this.currentPath = path
     this.imageNav = imageNav ?? null
     this.currentContentType = null
-    this.overlay.hidden = false
-    this.content.innerHTML = '<div class="viewer-loading">Loading...</div>'
-    this.filename.textContent = path.split('/').pop() || ''
+    this.activeTarget.container.hidden = false
+    this.activeTarget.content.innerHTML = '<div class="viewer-loading">Loading...</div>'
+    this.activeTarget.filename.textContent = path.split('/').pop() || ''
     this.hideAllControlButtons()
 
     try {
@@ -454,7 +492,7 @@ class FileViewer {
     if (isMarkdown) {
       // Render markdown
       const html = marked.parse(content) as string
-      this.content.innerHTML = `<div class="viewer-markdown" style="font-size: ${size}px">${html}</div>`
+      this.activeTarget.content.innerHTML = `<div class="viewer-markdown" style="font-size: ${size}px">${html}</div>`
     } else {
       // Render with syntax highlighting
       const language = getLanguage(extension)
@@ -466,7 +504,7 @@ class FileViewer {
         highlighted = hljs.highlightAuto(content).value
       }
 
-      this.content.innerHTML = `<div class="viewer-text" style="font-size: ${size}px"><code class="hljs">${highlighted}</code></div>`
+      this.activeTarget.content.innerHTML = `<div class="viewer-text" style="font-size: ${size}px"><code class="hljs">${highlighted}</code></div>`
     }
 
     this.updateControlButtons()
@@ -475,25 +513,25 @@ class FileViewer {
   private renderImage(url: string, filename: string): void {
     this.currentContentType = 'image'
     const imgSrc = apiUrl(url)
-    this.content.innerHTML = `
+    this.activeTarget.content.innerHTML = `
       <div class="viewer-image">
         <img src="${imgSrc}" alt="${this.escapeHtml(filename)}" />
       </div>
     `
-    const image = this.content.querySelector('img')
+    const image = this.activeTarget.content.querySelector('img')
     if (!image) return
     image.addEventListener('load', () => {
       const width = image.naturalWidth
       const height = image.naturalHeight
       if (!width || !height) return
-      this.filename.textContent = `${filename} • ${width}x${height}`
+      this.activeTarget.filename.textContent = `${filename} • ${width}x${height}`
     }, { once: true })
 
     this.updateControlButtons()
   }
 
   private renderError(message: string): void {
-    this.content.innerHTML = `
+    this.activeTarget.content.innerHTML = `
       <div class="viewer-error">
         <div class="viewer-error-icon">${TriangleAlert}</div>
         <div>${this.escapeHtml(message)}</div>
@@ -510,14 +548,26 @@ class FileViewer {
   }
 
   private closeInternal(shouldNotify: boolean): void {
-    this.overlay.hidden = true
+    this.activeTarget.container.hidden = true
     this.currentPath = null
     this.imageNav = null
     this.currentContentType = null
-    this.content.innerHTML = ''
+    this.activeTarget.content.innerHTML = ''
     this.updateControlButtons()
     if (!shouldNotify) return
     this.onClose?.()
+  }
+
+  get isInlineOpen(): boolean {
+    return !this.previewTarget.container.hidden
+  }
+
+  get isOverlayOpen(): boolean {
+    return !this.overlayTarget.container.hidden
+  }
+
+  get filePath(): string | null {
+    return this.currentPath
   }
 
   private download(): void {
@@ -1908,6 +1958,9 @@ class FileBrowser {
   private settingsModal: SettingsModal
   private highlightedFile: string | null = null
   private dynamicMode: boolean
+  private selectedFilePath: string | null = null
+  private previewPane: HTMLElement
+  private previewHeader: HTMLElement
 
   constructor(dynamicMode = false) {
     this.dynamicMode = dynamicMode
@@ -1915,6 +1968,8 @@ class FileBrowser {
     this.pathDisplay = document.getElementById('path-display')!
     this.loading = document.getElementById('loading')!
     this.toast = document.getElementById('toast')!
+    this.previewPane = document.getElementById('preview-pane')!
+    this.previewHeader = document.getElementById('preview-header')!
     this.useQueryRouting = isIosStandalone()
     this.viewer = new FileViewer(
       () => this.handleViewerClose(),
@@ -1935,6 +1990,9 @@ class FileBrowser {
     this.setupEventListeners()
     this.setupPullToRefresh()
     window.addEventListener('popstate', () => this.handlePopState())
+    window.matchMedia('(min-width: 1024px)').addEventListener('change', (e) => {
+      this.handleLayoutChange(e.matches)
+    })
     this.loadFromLocation()
   }
 
@@ -1957,7 +2015,12 @@ class FileBrowser {
   private handleViewerNavigate(path: string): void {
     const nav = this.getImageNavContext(path)
     if (!nav) return
-    this.viewer.open(path, nav)
+    const inline = isTwoPaneMode()
+    this.viewer.open(path, nav, inline)
+    if (inline) {
+      this.selectedFilePath = path
+      this.updateSelectedFileHighlight()
+    }
     this.updateHistory(path, true, true)
   }
 
@@ -2084,8 +2147,16 @@ class FileBrowser {
       this.renderItems(data.items)
       this.gitStatusBar.update(path)
       if (options.openViewerPath) {
+        const inline = isTwoPaneMode()
         const nav = this.getImageNavContext(options.openViewerPath)
-        this.viewer.open(options.openViewerPath, nav)
+        this.viewer.open(options.openViewerPath, nav, inline)
+        if (inline) {
+          this.previewHeader.hidden = false
+          this.selectedFilePath = options.openViewerPath
+          this.updateSelectedFileHighlight()
+        }
+      } else if (isTwoPaneMode() && !this.selectedFilePath) {
+        this.showPreviewEmptyState()
       }
     } catch (error) {
       this.currentItems = []
@@ -2261,12 +2332,19 @@ class FileBrowser {
 
   private handleItemClick(path: string, type: 'file' | 'directory', extension: string | null): void {
     if (type === 'directory') {
+      if (isTwoPaneMode()) {
+        this.closePreview()
+      }
       this.navigate(path)
     } else {
       // Check if file is viewable
       const viewableType = isViewable(extension)
       if (viewableType) {
-        this.openViewer(path)
+        if (isTwoPaneMode()) {
+          this.openInlineViewer(path)
+        } else {
+          this.openViewer(path)
+        }
       } else {
         this.downloadFile(path)
       }
@@ -2284,6 +2362,9 @@ class FileBrowser {
 
   private goUp(): void {
     if (this.currentPath === '/') return
+    if (isTwoPaneMode()) {
+      this.closePreview()
+    }
     const parts = this.currentPath.split('/').filter(Boolean)
     parts.pop()
     const parent = parts.length > 0 ? '/' + parts.join('/') : '/'
@@ -2295,6 +2376,11 @@ class FileBrowser {
   }
 
   private handleViewerClose(): void {
+    if (isTwoPaneMode()) {
+      this.selectedFilePath = null
+      this.updateSelectedFileHighlight()
+      this.showPreviewEmptyState()
+    }
     this.updateHistory(this.currentPath, false, false)
   }
 
@@ -2306,6 +2392,70 @@ class FileBrowser {
     this.viewer.open(path, nav)
     if (options.updateHistory === false) return
     this.updateHistory(path, true, options.replaceHistory)
+  }
+
+  private openInlineViewer(path: string): void {
+    this.previewHeader.hidden = false
+    this.selectedFilePath = path
+    this.updateSelectedFileHighlight()
+    const nav = this.getImageNavContext(path)
+    this.viewer.open(path, nav, true)
+    this.updateHistory(path, true, false)
+  }
+
+  private closePreview(): void {
+    this.selectedFilePath = null
+    this.updateSelectedFileHighlight()
+    this.viewer.closeSilently()
+    this.showPreviewEmptyState()
+  }
+
+  private updateSelectedFileHighlight(): void {
+    this.fileList.querySelectorAll('.file-item.selected').forEach((item) => {
+      item.classList.remove('selected')
+    })
+
+    if (!this.selectedFilePath) return
+
+    const items = this.fileList.querySelectorAll('.file-item')
+    for (let i = 0; i < items.length; i++) { const item = items[i]!;
+      if (item.getAttribute('data-path') === this.selectedFilePath) {
+        item.classList.add('selected')
+        break
+      }
+    }
+  }
+
+  private showPreviewEmptyState(): void {
+    this.previewPane.hidden = true
+  }
+
+  private handleLayoutChange(isTwoPane: boolean): void {
+    if (isTwoPane) {
+      // Switching from narrow to wide
+      if (this.viewer.isOverlayOpen && this.viewer.filePath) {
+        const path = this.viewer.filePath
+        this.viewer.closeSilently()
+        this.selectedFilePath = path
+        this.updateSelectedFileHighlight()
+        const nav = this.getImageNavContext(path)
+        this.viewer.open(path, nav, true)
+      } else {
+        this.showPreviewEmptyState()
+      }
+    } else {
+      // Switching from wide to narrow
+      if (this.viewer.isInlineOpen && this.viewer.filePath) {
+        const path = this.viewer.filePath
+        this.viewer.closeSilently()
+        this.selectedFilePath = null
+        this.updateSelectedFileHighlight()
+        const nav = this.getImageNavContext(path)
+        this.viewer.open(path, nav, false)
+      } else {
+        this.previewPane.hidden = true
+      }
+    }
   }
 
   private loadFromLocation(): void {
@@ -2323,6 +2473,10 @@ class FileBrowser {
     const { path, view } = this.parseLocation()
     if (!view || path === '/') {
       this.viewer.closeSilently()
+      if (isTwoPaneMode()) {
+        this.selectedFilePath = null
+        this.updateSelectedFileHighlight()
+      }
       this.navigate(path, { updateHistory: false })
       return
     }
