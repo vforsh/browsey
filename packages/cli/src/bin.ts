@@ -31,9 +31,9 @@ const apiCommand = new Command('api')
   .option('--no-readonly', 'Allow file modifications')
   .option('--hidden', 'Show hidden files')
   .option('--no-qr', 'Do not display QR code')
-  .option('--no-https', 'Disable HTTPS')
-  .option('--https-cert <path>', 'Path to TLS certificate (PEM)', './certs/browsey.pem')
-  .option('--https-key <path>', 'Path to TLS private key (PEM)', './certs/browsey-key.pem')
+  .option('--https', 'Enable HTTPS')
+  .option('--https-cert <path>', 'Path to TLS certificate (PEM)')
+  .option('--https-key <path>', 'Path to TLS private key (PEM)')
   .option('-w, --watch', 'Enable live reload on file changes (dev mode)')
   .option('--cors <origin>', 'CORS allowed origin', '*')
   .action(async (pathArg: string, options: Record<string, unknown>) => {
@@ -49,7 +49,7 @@ const apiCommand = new Command('api')
       console.log(`Port ${requestedPort} is busy. Using ${port} instead.`)
     }
 
-    const httpsEnabled = (options.https as boolean) ?? true
+    const httpsEnabled = (options.https as boolean) ?? false
     const httpsCert = options.httpsCert ? resolve(options.httpsCert as string) : undefined
     const httpsKey = options.httpsKey ? resolve(options.httpsKey as string) : undefined
     if (httpsEnabled && (!httpsCert || !httpsKey)) {
@@ -93,9 +93,9 @@ const appCommand = new Command('app')
   .option('-h, --host <host>', 'Host to bind to', '0.0.0.0')
   .option('--api <url>', 'API server URL (optional, configure in browser if omitted)')
   .option('--open', 'Open browser automatically')
-  .option('--no-https', 'Disable HTTPS')
-  .option('--https-cert <path>', 'Path to TLS certificate (PEM)', './certs/browsey.pem')
-  .option('--https-key <path>', 'Path to TLS private key (PEM)', './certs/browsey-key.pem')
+  .option('--https', 'Enable HTTPS')
+  .option('--https-cert <path>', 'Path to TLS certificate (PEM)')
+  .option('--https-key <path>', 'Path to TLS private key (PEM)')
   .option('--no-qr', 'Do not display QR code')
   .action(async (options: Record<string, unknown>) => {
     const requestedPort = parseInt(options.port as string, 10)
@@ -110,7 +110,7 @@ const appCommand = new Command('app')
       console.log(`Port ${requestedPort} is busy. Using ${port} instead.`)
     }
 
-    const httpsEnabled = (options.https as boolean) ?? true
+    const httpsEnabled = (options.https as boolean) ?? false
     const httpsCert = options.httpsCert ? resolve(options.httpsCert as string) : undefined
     const httpsKey = options.httpsKey ? resolve(options.httpsKey as string) : undefined
     if (httpsEnabled && (!httpsCert || !httpsKey)) {
@@ -154,9 +154,9 @@ const startCommand = new Command('start')
   .option('--no-readonly', 'Allow file modifications')
   .option('--hidden', 'Show hidden files')
   .option('--no-qr', 'Do not display QR code')
-  .option('--no-https', 'Disable HTTPS')
-  .option('--https-cert <path>', 'Path to TLS certificate (PEM)', './certs/browsey.pem')
-  .option('--https-key <path>', 'Path to TLS private key (PEM)', './certs/browsey-key.pem')
+  .option('--https', 'Enable HTTPS')
+  .option('--https-cert <path>', 'Path to TLS certificate (PEM)')
+  .option('--https-key <path>', 'Path to TLS private key (PEM)')
   .option('-w, --watch', 'Enable live reload on file changes (dev mode)')
   .option('--cors <origin>', 'CORS allowed origin', '*')
   .option('--open', 'Open browser automatically')
@@ -186,7 +186,7 @@ const startCommand = new Command('start')
       console.log(`App port ${requestedAppPort} is busy. Using ${appPort} instead.`)
     }
 
-    const httpsEnabled = (options.https as boolean) ?? true
+    const httpsEnabled = (options.https as boolean) ?? false
     const httpsCert = options.httpsCert ? resolve(options.httpsCert as string) : undefined
     const httpsKey = options.httpsKey ? resolve(options.httpsKey as string) : undefined
     if (httpsEnabled && (!httpsCert || !httpsKey)) {
