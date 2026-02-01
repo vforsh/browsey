@@ -385,8 +385,8 @@ body {
   }
 
   .file-list {
-    width: 360px;
-    min-width: 300px;
+    width: 396px;
+    min-width: 330px;
     flex-shrink: 0;
     flex-grow: 0;
     border-right: 1px solid rgba(255, 255, 255, 0.1);
@@ -690,6 +690,14 @@ body {
   border: none;
   border-top: 1px solid rgba(255, 255, 255, 0.1);
   margin: 2em 0;
+}
+
+.viewer-markdown .frontmatter {
+  margin-bottom: 1.5em;
+}
+
+.viewer-markdown .frontmatter pre {
+  margin: 0;
 }
 
 /* Image viewer */

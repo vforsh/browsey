@@ -490,8 +490,20 @@ class FileViewer {
     const isMarkdown = extension?.toLowerCase() === 'md' || extension?.toLowerCase() === 'markdown'
 
     if (isMarkdown) {
+      // Extract YAML frontmatter and render it as a code block
+      let frontmatterHtml = ''
+      let body = content
+      const fmMatch = content.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?/)
+      if (fmMatch) {
+        const yaml = fmMatch[1]
+        const highlighted = hljs.getLanguage('yaml')
+          ? hljs.highlight(yaml, { language: 'yaml' }).value
+          : hljs.highlightAuto(yaml).value
+        frontmatterHtml = `<div class="frontmatter"><pre><code class="hljs language-yaml">${highlighted}</code></pre></div>`
+        body = content.slice(fmMatch[0].length)
+      }
       // Render markdown
-      const html = marked.parse(content) as string
+      const html = frontmatterHtml + (marked.parse(body) as string)
       this.activeTarget.content.innerHTML = `<div class="viewer-markdown" style="font-size: ${size}px">${html}</div>`
     } else {
       // Render with syntax highlighting
@@ -543,7 +555,6 @@ class FileViewer {
       const width = image.naturalWidth
       const height = image.naturalHeight
       if (!width || !height) return
-      this.activeTarget.filename.textContent = `${filename} • ${width}x${height}`
       if (infoEl) {
         infoEl.textContent = `${width} × ${height} · ${this.formatSize(size)}`
       }
