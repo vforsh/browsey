@@ -26,6 +26,7 @@ export type AppServerOptions = {
   httpsKey?: string
   open: boolean
   quiet?: boolean
+  watch?: boolean
 }
 
 export type FileItem = {
@@ -60,6 +61,11 @@ export interface InstanceInfo {
   startedAt: string
   readonly: boolean
   version: string
+  // Launch options for restart capability
+  https?: boolean
+  httpsCert?: string
+  httpsKey?: string
+  showQR?: boolean
 }
 
 export interface RegistryFile {

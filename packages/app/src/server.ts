@@ -18,15 +18,20 @@ declare const UI_APPLE_TOUCH_ICON_B64: string
 declare const UI_SCREENSHOT_WIDE_B64: string
 declare const UI_SCREENSHOT_MOBILE_B64: string
 
-// Dev mode: load UI files from disk if constants aren't defined
-async function getUIContent(): Promise<{ html: string; css: string; js: string }> {
-  if (typeof UI_HTML !== 'undefined') {
-    return { html: UI_HTML, css: UI_CSS, js: UI_JS }
-  }
+// Check if running in dev mode (UI constants not defined)
+function isDevMode(): boolean {
+  return typeof UI_HTML === 'undefined'
+}
 
-  // Dev mode: load from packages/app/src/ui directory
+// Get UI directory path for dev mode
+function getUiDir(): string {
   const __dirname = dirname(fileURLToPath(import.meta.url))
-  const uiDir = join(__dirname, 'ui')
+  return join(__dirname, 'ui')
+}
+
+// Dev mode: load UI files from disk
+async function loadUIFromDisk(): Promise<{ html: string; css: string; js: string }> {
+  const uiDir = getUiDir()
 
   const [html, css] = await Promise.all([
     Bun.file(join(uiDir, 'index.html')).text(),
@@ -53,6 +58,14 @@ async function getUIContent(): Promise<{ html: string; css: string; js: string }
   const js = await clientOutput.text()
 
   return { html, css, js }
+}
+
+// Load UI content (from build constants or dev files)
+async function getUIContent(): Promise<{ html: string; css: string; js: string }> {
+  if (!isDevMode()) {
+    return { html: UI_HTML, css: UI_CSS, js: UI_JS }
+  }
+  return loadUIFromDisk()
 }
 
 type PwaAssets = {
@@ -125,6 +138,7 @@ export async function startAppServer(
   callbacks: AppServerCallbacks
 ): Promise<{ shutdown: () => void }> {
   const listenHost = normalizeHost(options.host)
+  const watchMode = options.watch && isDevMode()
 
   if (options.https && (!options.httpsCert || !options.httpsKey)) {
     console.error('Error: HTTPS requires both cert and key paths')
@@ -150,17 +164,68 @@ export async function startAppServer(
   }
 
   // Load UI content (from build constants or dev files)
-  const ui = await getUIContent()
+  // In watch mode, we'll reload on each request
+  let ui = await getUIContent()
   const pwa = await getPwaAssets()
 
-  // Inject the API base URL into HTML (if provided)
-  const apiBaseUrl = options.apiUrl ? options.apiUrl.replace(/\/$/, '') : ''
-  const htmlWithApi = apiBaseUrl
-    ? ui.html.replace(
-        'window.__BROWSEY_API_BASE__ = ""',
-        `window.__BROWSEY_API_BASE__ = ${JSON.stringify(apiBaseUrl)}`
-      )
-    : ui.html
+  // Live reload SSE clients
+  const liveReloadClients = new Set<ReadableStreamDefaultController<Uint8Array>>()
+
+  // File watcher for live reload
+  let watcher: ReturnType<typeof import('fs').watch> | null = null
+  if (watchMode) {
+    const fs = await import('fs')
+    const uiDir = getUiDir()
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null
+
+    watcher = fs.watch(uiDir, { recursive: true }, (eventType, filename) => {
+      if (!filename) return
+      // Ignore non-source files
+      if (!filename.endsWith('.ts') && !filename.endsWith('.css') && !filename.endsWith('.html')) return
+
+      // Debounce to avoid multiple reloads
+      if (debounceTimer) clearTimeout(debounceTimer)
+      debounceTimer = setTimeout(() => {
+        console.log(`  \x1b[2m[watch] File changed: ${filename}\x1b[0m`)
+        // Notify all connected clients to reload
+        const message = new TextEncoder().encode('data: reload\n\n')
+        for (const controller of liveReloadClients) {
+          try {
+            controller.enqueue(message)
+          } catch {
+            liveReloadClients.delete(controller)
+          }
+        }
+      }, 100)
+    })
+  }
+
+  // Helper to get current HTML with API base and live reload script injected
+  async function getHtml(): Promise<string> {
+    if (watchMode) {
+      ui = await loadUIFromDisk()
+    }
+    const apiBaseUrl = options.apiUrl ? options.apiUrl.replace(/\/$/, '') : ''
+    let html = apiBaseUrl
+      ? ui.html.replace(
+          'window.__BROWSEY_API_BASE__ = ""',
+          `window.__BROWSEY_API_BASE__ = ${JSON.stringify(apiBaseUrl)}`
+        )
+      : ui.html
+
+    // Inject live reload script in watch mode
+    if (watchMode) {
+      const liveReloadScript = `<script>
+(function() {
+  var es = new EventSource('/__live-reload');
+  es.onmessage = function() { location.reload(); };
+  es.onerror = function() { es.close(); setTimeout(function() { location.reload(); }, 1000); };
+})();
+</script>`
+      html = html.replace('</body>', liveReloadScript + '</body>')
+    }
+    return html
+  }
 
   const server = Bun.serve({
     port: options.port,
@@ -169,13 +234,35 @@ export async function startAppServer(
     fetch: async (req) => {
       const url = new URL(req.url)
 
+      // Live reload SSE endpoint
+      if (url.pathname === '/__live-reload' && watchMode) {
+        const stream = new ReadableStream<Uint8Array>({
+          start(controller) {
+            liveReloadClients.add(controller)
+          },
+          cancel(controller) {
+            liveReloadClients.delete(controller)
+          },
+        })
+        return new Response(stream, {
+          headers: {
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache',
+            'Connection': 'keep-alive',
+          },
+        })
+      }
+
       if (url.pathname === '/') {
-        return new Response(htmlWithApi, { headers: { 'Content-Type': 'text/html' } })
+        const html = await getHtml()
+        return new Response(html, { headers: { 'Content-Type': 'text/html' } })
       }
       if (url.pathname === '/styles.css') {
+        if (watchMode) ui = await loadUIFromDisk()
         return new Response(ui.css, { headers: { 'Content-Type': 'text/css' } })
       }
       if (url.pathname === '/app.js') {
+        if (watchMode) ui = await loadUIFromDisk()
         return new Response(ui.js, { headers: { 'Content-Type': 'application/javascript' } })
       }
       if (url.pathname === '/manifest.webmanifest') {
@@ -199,16 +286,22 @@ export async function startAppServer(
       }
 
       // SPA fallback
-      return new Response(htmlWithApi, { headers: { 'Content-Type': 'text/html' } })
+      const html = await getHtml()
+      return new Response(html, { headers: { 'Content-Type': 'text/html' } })
     },
   })
 
   const localUrl = getLocalUrl(listenHost, options.port, options.https)
   const networkUrl = getNetworkUrl(listenHost, options.port, options.https)
 
+  const apiBaseUrl = options.apiUrl ? options.apiUrl.replace(/\/$/, '') : ''
+
   if (!options.quiet) {
     console.log()
     console.log('  \x1b[1mBrowsey App\x1b[0m is running!')
+    if (watchMode) {
+      console.log('  \x1b[33m[watch mode]\x1b[0m Live reload enabled')
+    }
     console.log()
     console.log(`  \x1b[2mLocal:\x1b[0m   ${localUrl}`)
     if (networkUrl) {
@@ -238,6 +331,10 @@ export async function startAppServer(
     startedAt: new Date().toISOString(),
     readonly: true,
     version: options.version,
+    https: options.https,
+    httpsCert: options.httpsCert,
+    httpsKey: options.httpsKey,
+    showQR: options.showQR,
   })
 
   if (options.open) {
@@ -245,6 +342,7 @@ export async function startAppServer(
   }
 
   const shutdown = () => {
+    if (watcher) watcher.close()
     callbacks.deregister(process.pid)
     server.stop()
   }

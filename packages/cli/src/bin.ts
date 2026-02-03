@@ -7,7 +7,7 @@ import { startApiServer } from '@vforsh/browsey-api'
 import { startAppServer } from '@vforsh/browsey-app'
 import { parseIgnorePatterns } from '@vforsh/browsey-shared'
 import type { InstanceInfo } from '@vforsh/browsey-shared'
-import { listInstances, findAllMatchingInstances, stopInstance, register, deregister } from './registry.js'
+import { listInstances, findAllMatchingInstances, stopInstance, register, deregister, parseTarget } from './registry.js'
 
 export const VERSION = '0.1.0'
 
@@ -97,6 +97,7 @@ const appCommand = new Command('app')
   .option('--https-cert <path>', 'Path to TLS certificate (PEM)')
   .option('--https-key <path>', 'Path to TLS private key (PEM)')
   .option('--no-qr', 'Do not display QR code')
+  .option('-w, --watch', 'Watch UI files and live reload on changes (dev mode)')
   .action(async (options: Record<string, unknown>) => {
     const requestedPort = parseInt(options.port as string, 10)
     if (isNaN(requestedPort) || requestedPort < 1 || requestedPort > 65535) {
@@ -129,6 +130,67 @@ const appCommand = new Command('app')
         httpsCert,
         httpsKey,
         open: (options.open as boolean) ?? false,
+        watch: (options.watch as boolean) ?? false,
+      },
+      { register, deregister }
+    )
+
+    const onSignal = () => {
+      console.log('\n  Shutting down...')
+      shutdown()
+      process.exit(0)
+    }
+    process.on('SIGINT', onSignal)
+    process.on('SIGTERM', onSignal)
+  })
+
+// App reload subcommand
+appCommand
+  .command('reload')
+  .alias('restart')
+  .description('Restart an app server instance (picks up code changes)')
+  .argument('<target>', 'Port (e.g., :4211 or 4211) or PID of the app instance')
+  .action(async (target: string) => {
+    // Normalize target: allow both "4211" and ":4211"
+    const portTarget = target.startsWith(':') ? target : `:${target}`
+    const instances = listInstances()
+    const instance = instances.find((i) => {
+      if (i.kind !== 'app') return false
+      const parsed = parseTarget(portTarget)
+      if (parsed.type === 'port') return i.port === parsed.value
+      if (parsed.type === 'pid') return i.pid === parsed.value
+      return false
+    })
+
+    if (!instance) {
+      console.error(`Error: No app instance found matching "${target}"`)
+      console.error('Run "browsey list" to see running instances.')
+      process.exit(1)
+    }
+
+    console.log(`Restarting app server on port ${instance.port}...`)
+
+    // Save instance config before stopping
+    const { port, host, apiUrl, https, httpsCert, httpsKey, showQR } = instance
+
+    // Stop the instance
+    stopInstance(instance.pid, false)
+
+    // Wait a moment for port to be released
+    await new Promise((r) => setTimeout(r, 500))
+
+    // Start new instance with same config
+    const { shutdown } = await startAppServer(
+      {
+        port,
+        host,
+        apiUrl,
+        showQR: showQR ?? true,
+        version: VERSION,
+        https: https ?? false,
+        httpsCert,
+        httpsKey,
+        open: false,
       },
       { register, deregister }
     )

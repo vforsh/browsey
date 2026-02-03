@@ -495,7 +495,7 @@ class FileViewer {
       let body = content
       const fmMatch = content.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?/)
       if (fmMatch) {
-        const yaml = fmMatch[1]
+        const yaml = fmMatch[1] ?? ''
         const highlighted = hljs.getLanguage('yaml')
           ? hljs.highlight(yaml, { language: 'yaml' }).value
           : hljs.highlightAuto(yaml).value
@@ -1989,6 +1989,8 @@ class FileBrowser {
   private useQueryRouting = false
   private pullStartY: number | null = null
   private pullTriggered = false
+  private pullRefreshIndicator: HTMLElement
+  private isRefreshing = false
   private viewer: FileViewer
   private infoModal: InfoModal
   private searchOverlay: SearchOverlay
@@ -2010,6 +2012,7 @@ class FileBrowser {
     this.toast = document.getElementById('toast')!
     this.previewPane = document.getElementById('preview-pane')!
     this.previewHeader = document.getElementById('preview-header')!
+    this.pullRefreshIndicator = document.getElementById('pull-refresh-indicator')!
     this.useQueryRouting = isIosStandalone()
     this.viewer = new FileViewer(
       () => this.handleViewerClose(),
@@ -2113,13 +2116,19 @@ class FileBrowser {
 
   private setupPullToRefresh(): void {
     const threshold = 80
+    const maxPull = 120
+    let currentPullDelta = 0
+    let hapticTriggered = false
 
     this.fileList.addEventListener(
       'touchstart',
       (event) => {
-        if (this.fileList.scrollTop !== 0) return
+        if (this.fileList.scrollTop !== 0 || this.isRefreshing) return
         this.pullStartY = event.touches[0]?.clientY ?? null
         this.pullTriggered = false
+        hapticTriggered = false
+        currentPullDelta = 0
+        this.pullRefreshIndicator.classList.remove('active', 'refreshing')
       },
       { passive: true }
     )
@@ -2127,13 +2136,49 @@ class FileBrowser {
     this.fileList.addEventListener(
       'touchmove',
       (event) => {
-        if (this.pullStartY === null || this.pullTriggered) return
+        if (this.pullStartY === null || this.isRefreshing) return
+        if (this.fileList.scrollTop > 0) {
+          this.pullStartY = null
+          this.pullRefreshIndicator.style.transform = 'translateY(-100%)'
+          return
+        }
+
         const currentY = event.touches[0]?.clientY ?? 0
         const delta = currentY - this.pullStartY
-        if (delta > threshold) {
+
+        if (delta <= 0) {
+          this.pullRefreshIndicator.style.transform = 'translateY(-100%)'
+          currentPullDelta = 0
+          return
+        }
+
+        // Calculate progress (0 to 1) with resistance
+        const resistance = 0.5
+        const adjustedDelta = Math.min(delta * resistance, maxPull)
+        currentPullDelta = adjustedDelta
+        const progress = Math.min(adjustedDelta / threshold, 1)
+
+        // Position indicator (starts hidden, moves down)
+        const translateY = adjustedDelta - 36 // 36 is indicator height
+        this.pullRefreshIndicator.style.transform = `translateY(${translateY}px)`
+
+        // Rotate spinner based on progress (0 to 270 degrees)
+        const spinner = this.pullRefreshIndicator.querySelector('.pull-refresh-spinner') as HTMLElement
+        if (spinner) {
+          spinner.style.transform = `rotate(${progress * 270}deg)`
+        }
+
+        // Mark as ready to refresh and trigger haptic when threshold reached
+        if (adjustedDelta >= threshold) {
           this.pullTriggered = true
-          this.showToast('Refreshing...')
-          this.refresh()
+          this.pullRefreshIndicator.classList.add('active')
+          if (!hapticTriggered) {
+            hapticTriggered = true
+            this.triggerHaptic()
+          }
+        } else {
+          this.pullTriggered = false
+          this.pullRefreshIndicator.classList.remove('active')
         }
       },
       { passive: true }
@@ -2142,11 +2187,51 @@ class FileBrowser {
     this.fileList.addEventListener(
       'touchend',
       () => {
+        if (this.isRefreshing) return
+
+        if (this.pullTriggered && currentPullDelta >= threshold) {
+          // Start refresh on release
+          this.startRefresh()
+        } else {
+          // Reset indicator if not triggered
+          this.pullRefreshIndicator.style.transform = 'translateY(-100%)'
+        }
         this.pullStartY = null
-        this.pullTriggered = false
+        currentPullDelta = 0
       },
       { passive: true }
     )
+  }
+
+  private triggerHaptic(): void {
+    // Haptic feedback for PWA (Vibration API)
+    if ('vibrate' in navigator) {
+      navigator.vibrate(10)
+    }
+  }
+
+  private async startRefresh(): Promise<void> {
+    this.isRefreshing = true
+    this.pullRefreshIndicator.classList.add('refreshing')
+
+    // Move indicator to fixed position during refresh
+    this.pullRefreshIndicator.style.transform = 'translateY(10px)'
+
+    // Reset spinner rotation for continuous animation
+    const spinner = this.pullRefreshIndicator.querySelector('.pull-refresh-spinner') as HTMLElement
+    if (spinner) {
+      spinner.style.transform = ''
+    }
+
+    try {
+      await this.refresh()
+    } finally {
+      // Hide indicator after refresh completes
+      this.pullRefreshIndicator.classList.remove('refreshing', 'active')
+      this.pullRefreshIndicator.style.transform = 'translateY(-100%)'
+      this.isRefreshing = false
+      this.pullTriggered = false
+    }
   }
 
   private handleServerChange(): void {
@@ -2411,8 +2496,8 @@ class FileBrowser {
     this.navigate(parent)
   }
 
-  private refresh(): void {
-    this.navigate(this.currentPath)
+  private refresh(): Promise<void> {
+    return this.navigate(this.currentPath)
   }
 
   private handleViewerClose(): void {

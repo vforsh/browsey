@@ -126,6 +126,7 @@ body {
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
   min-width: 0;
+  position: relative;
 }
 
 /* Preview pane (hidden by default, visible in two-pane mode) */
@@ -186,6 +187,47 @@ body {
   width: 48px;
   height: 48px;
   opacity: 0.3;
+}
+
+/* Pull to Refresh Indicator */
+.pull-refresh-indicator {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%) translateY(-100%);
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--bg-secondary);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  pointer-events: none;
+}
+
+.pull-refresh-indicator.refreshing {
+  transition: transform 0.2s ease-out;
+}
+
+.pull-refresh-spinner {
+  width: 20px;
+  height: 20px;
+  color: var(--accent);
+}
+
+.pull-refresh-indicator.refreshing .pull-refresh-spinner {
+  animation: pullRefreshSpin 0.8s linear infinite;
+}
+
+@keyframes pullRefreshSpin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .loading {
