@@ -751,15 +751,28 @@ class SettingsModal {
   private closeBtn: HTMLElement
   private dynamicMode: boolean
   private onServerChange: () => void
+  private onCompactModeChange: (compact: boolean) => void
 
-  constructor(dynamicMode: boolean, onServerChange: () => void) {
+  private static readonly COMPACT_MODE_KEY = 'browsey-compact-mode'
+
+  constructor(dynamicMode: boolean, onServerChange: () => void, onCompactModeChange: (compact: boolean) => void) {
     this.dynamicMode = dynamicMode
     this.onServerChange = onServerChange
+    this.onCompactModeChange = onCompactModeChange
     this.overlay = document.getElementById('settings-overlay')!
     this.content = document.getElementById('settings-content')!
     this.closeBtn = document.getElementById('settings-close')!
 
     this.setupEventListeners()
+  }
+
+  static isCompactMode(): boolean {
+    return localStorage.getItem(SettingsModal.COMPACT_MODE_KEY) === '1'
+  }
+
+  private setCompactMode(compact: boolean): void {
+    localStorage.setItem(SettingsModal.COMPACT_MODE_KEY, compact ? '1' : '0')
+    this.onCompactModeChange(compact)
   }
 
   private setupEventListeners(): void {
@@ -796,6 +809,7 @@ class SettingsModal {
     const changeBtn = this.dynamicMode
       ? `<button class="settings-server-change" id="settings-change-server">Change</button>`
       : ''
+    const isCompact = SettingsModal.isCompactMode()
 
     this.content.innerHTML = `
       <div class="settings-section-title">Server</div>
@@ -803,6 +817,13 @@ class SettingsModal {
         <span class="settings-server-dot"></span>
         <span class="settings-server-url">${this.escapeHtml(serverUrl)}</span>
         ${changeBtn}
+      </div>
+      <div class="settings-section-title" style="margin-top: 20px;">Display</div>
+      <div class="settings-toggle-row">
+        <span class="settings-toggle-label">Compact mode</span>
+        <button class="settings-toggle ${isCompact ? 'active' : ''}" id="settings-compact-toggle" aria-pressed="${isCompact}">
+          <span class="settings-toggle-knob"></span>
+        </button>
       </div>
     `
 
@@ -812,6 +833,13 @@ class SettingsModal {
         this.onServerChange()
       })
     }
+
+    document.getElementById('settings-compact-toggle')?.addEventListener('click', (e) => {
+      const btn = e.currentTarget as HTMLButtonElement
+      const isActive = btn.classList.toggle('active')
+      btn.setAttribute('aria-pressed', String(isActive))
+      this.setCompactMode(isActive)
+    })
   }
 
   private escapeHtml(text: string): string {
@@ -2028,7 +2056,12 @@ class FileBrowser {
       (path) => this.gitHistoryOverlay.open(path),
       (path) => this.gitChangesOverlay.open(path)
     )
-    this.settingsModal = new SettingsModal(this.dynamicMode, () => this.handleServerChange())
+    this.settingsModal = new SettingsModal(
+      this.dynamicMode,
+      () => this.handleServerChange(),
+      (compact) => this.applyCompactMode(compact)
+    )
+    this.applyCompactMode(SettingsModal.isCompactMode())
 
     this.setupEventListeners()
     this.setupPullToRefresh()
@@ -2242,6 +2275,10 @@ class FileBrowser {
       this.navigate('/')
     })
     connectScreen.show()
+  }
+
+  private applyCompactMode(compact: boolean): void {
+    document.body.classList.toggle('compact-mode', compact)
   }
 
   async navigate(
