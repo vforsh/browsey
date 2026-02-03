@@ -103,6 +103,10 @@ export async function handleApiRequest(
 
 async function handleList(url: URL, options: ApiRoutesOptions): Promise<Response> {
   const requestPath = url.searchParams.get('path') || '/'
+  // Allow client to override showHidden via query param (only to show, not to hide if server allows)
+  const showHiddenParam = url.searchParams.get('hidden')
+  const showHidden = showHiddenParam === '1' || options.showHidden
+
   const safePath = resolveSafePath(options.root, requestPath)
 
   if (!safePath) {
@@ -120,7 +124,7 @@ async function handleList(url: URL, options: ApiRoutesOptions): Promise<Response
     const items: FileItem[] = []
 
     for (const entry of entries) {
-      if (!options.showHidden && entry.name.startsWith('.')) {
+      if (!showHidden && entry.name.startsWith('.')) {
         continue
       }
 

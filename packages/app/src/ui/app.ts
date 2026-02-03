@@ -752,13 +752,21 @@ class SettingsModal {
   private dynamicMode: boolean
   private onServerChange: () => void
   private onCompactModeChange: (compact: boolean) => void
+  private onShowHiddenChange: (show: boolean) => void
 
   private static readonly COMPACT_MODE_KEY = 'browsey-compact-mode'
+  private static readonly SHOW_HIDDEN_KEY = 'browsey-show-hidden'
 
-  constructor(dynamicMode: boolean, onServerChange: () => void, onCompactModeChange: (compact: boolean) => void) {
+  constructor(
+    dynamicMode: boolean,
+    onServerChange: () => void,
+    onCompactModeChange: (compact: boolean) => void,
+    onShowHiddenChange: (show: boolean) => void
+  ) {
     this.dynamicMode = dynamicMode
     this.onServerChange = onServerChange
     this.onCompactModeChange = onCompactModeChange
+    this.onShowHiddenChange = onShowHiddenChange
     this.overlay = document.getElementById('settings-overlay')!
     this.content = document.getElementById('settings-content')!
     this.closeBtn = document.getElementById('settings-close')!
@@ -770,9 +778,18 @@ class SettingsModal {
     return localStorage.getItem(SettingsModal.COMPACT_MODE_KEY) === '1'
   }
 
+  static isShowHidden(): boolean {
+    return localStorage.getItem(SettingsModal.SHOW_HIDDEN_KEY) === '1'
+  }
+
   private setCompactMode(compact: boolean): void {
     localStorage.setItem(SettingsModal.COMPACT_MODE_KEY, compact ? '1' : '0')
     this.onCompactModeChange(compact)
+  }
+
+  private setShowHidden(show: boolean): void {
+    localStorage.setItem(SettingsModal.SHOW_HIDDEN_KEY, show ? '1' : '0')
+    this.onShowHiddenChange(show)
   }
 
   private setupEventListeners(): void {
@@ -810,6 +827,7 @@ class SettingsModal {
       ? `<button class="settings-server-change" id="settings-change-server">Change</button>`
       : ''
     const isCompact = SettingsModal.isCompactMode()
+    const isShowHidden = SettingsModal.isShowHidden()
 
     this.content.innerHTML = `
       <div class="settings-section-title">Server</div>
@@ -822,6 +840,12 @@ class SettingsModal {
       <div class="settings-toggle-row">
         <span class="settings-toggle-label">Compact mode</span>
         <button class="settings-toggle ${isCompact ? 'active' : ''}" id="settings-compact-toggle" aria-pressed="${isCompact}">
+          <span class="settings-toggle-knob"></span>
+        </button>
+      </div>
+      <div class="settings-toggle-row">
+        <span class="settings-toggle-label">Show hidden files</span>
+        <button class="settings-toggle ${isShowHidden ? 'active' : ''}" id="settings-hidden-toggle" aria-pressed="${isShowHidden}">
           <span class="settings-toggle-knob"></span>
         </button>
       </div>
@@ -839,6 +863,13 @@ class SettingsModal {
       const isActive = btn.classList.toggle('active')
       btn.setAttribute('aria-pressed', String(isActive))
       this.setCompactMode(isActive)
+    })
+
+    document.getElementById('settings-hidden-toggle')?.addEventListener('click', (e) => {
+      const btn = e.currentTarget as HTMLButtonElement
+      const isActive = btn.classList.toggle('active')
+      btn.setAttribute('aria-pressed', String(isActive))
+      this.setShowHidden(isActive)
     })
   }
 
@@ -2059,7 +2090,8 @@ class FileBrowser {
     this.settingsModal = new SettingsModal(
       this.dynamicMode,
       () => this.handleServerChange(),
-      (compact) => this.applyCompactMode(compact)
+      (compact) => this.applyCompactMode(compact),
+      () => this.navigate(this.currentPath, { updateHistory: false })
     )
     this.applyCompactMode(SettingsModal.isCompactMode())
 
@@ -2297,7 +2329,9 @@ class FileBrowser {
     this.showLoading()
 
     try {
-      const response = await fetch(apiUrl(`/api/list?path=${encodeURIComponent(path)}`))
+      const showHidden = SettingsModal.isShowHidden()
+      const url = apiUrl(`/api/list?path=${encodeURIComponent(path)}${showHidden ? '&hidden=1' : ''}`)
+      const response = await fetch(url)
       if (!response.ok) {
         const error = await response.json()
         throw new Error(error.error || 'Failed to load directory')
