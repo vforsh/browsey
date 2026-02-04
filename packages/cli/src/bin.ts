@@ -85,6 +85,83 @@ const apiCommand = new Command('api')
     process.on('SIGTERM', onSignal)
   })
 
+// API reload subcommand
+apiCommand
+  .command('reload')
+  .alias('restart')
+  .description('Restart an API server instance (picks up code changes)')
+  .argument('<target>', 'Port (e.g., :4200 or 4200) or PID of the API instance')
+  .action(async (target: string) => {
+    // Normalize target: allow both "4200" and ":4200"
+    const portTarget = target.startsWith(':') ? target : `:${target}`
+    const instances = listInstances()
+    const instance = instances.find((i) => {
+      if (i.kind !== 'api') return false
+      const parsed = parseTarget(portTarget)
+      if (parsed.type === 'port') return i.port === parsed.value
+      if (parsed.type === 'pid') return i.pid === parsed.value
+      return false
+    })
+
+    if (!instance) {
+      console.error(`Error: No API instance found matching "${target}"`)
+      console.error('Run "browsey list" to see running instances.')
+      process.exit(1)
+    }
+
+    console.log(`Restarting API server on port ${instance.port}...`)
+
+    // Save instance config before stopping
+    const {
+      port,
+      host,
+      rootPath,
+      readonly,
+      https,
+      httpsCert,
+      httpsKey,
+      showQR,
+      showHidden,
+      ignorePatterns,
+      watch,
+      corsOrigin,
+    } = instance
+
+    // Stop the instance
+    stopInstance(instance.pid, false)
+
+    // Wait a moment for port to be released
+    await new Promise((r) => setTimeout(r, 500))
+
+    // Start new instance with same config
+    const { shutdown } = await startApiServer(
+      {
+        root: rootPath,
+        port,
+        host,
+        readonly,
+        showHidden: showHidden ?? false,
+        showQR: showQR ?? true,
+        ignorePatterns: ignorePatterns ?? [],
+        version: VERSION,
+        https: https ?? false,
+        httpsCert,
+        httpsKey,
+        watch: watch ?? false,
+        corsOrigin: corsOrigin ?? '*',
+      },
+      { register, deregister }
+    )
+
+    const onSignal = () => {
+      console.log('\n  Shutting down...')
+      shutdown()
+      process.exit(0)
+    }
+    process.on('SIGINT', onSignal)
+    process.on('SIGTERM', onSignal)
+  })
+
 // App command
 const appCommand = new Command('app')
   .alias('ui')

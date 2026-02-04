@@ -134,6 +134,14 @@ export async function startApiServer(
     startedAt: new Date().toISOString(),
     readonly: options.readonly,
     version: options.version,
+    https: options.https,
+    httpsCert: options.httpsCert,
+    httpsKey: options.httpsKey,
+    showQR: options.showQR,
+    showHidden: options.showHidden,
+    ignorePatterns: options.ignorePatterns,
+    watch: options.watch,
+    corsOrigin: options.corsOrigin,
   })
 
   const shutdown = () => {

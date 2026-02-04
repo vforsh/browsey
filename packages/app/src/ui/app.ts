@@ -121,6 +121,7 @@ const VIEWABLE_TEXT_EXTENSIONS = new Set([
   'dockerfile', 'makefile', 'cmake', 'gradle', 'properties',
   'log', 'diff', 'patch',
   'vue', 'svelte', 'astro',
+  'ejs', 'erb', 'hbs', 'handlebars', 'mustache', 'pug', 'jade', 'njk', 'jinja', 'jinja2', 'twig',
 ])
 
 const VIEWABLE_IMAGE_EXTENSIONS = new Set([
@@ -200,6 +201,17 @@ const LANGUAGE_MAP: Record<string, string> = {
   r: 'r',
   zig: 'zig',
   nim: 'nim',
+  ejs: 'xml',
+  erb: 'erb',
+  hbs: 'xml',
+  handlebars: 'xml',
+  mustache: 'xml',
+  pug: 'pug',
+  jade: 'pug',
+  njk: 'twig',
+  jinja: 'twig',
+  jinja2: 'twig',
+  twig: 'twig',
 }
 
 function isViewable(extension: string | null): 'text' | 'image' | null {

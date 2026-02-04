@@ -24,6 +24,7 @@ const TEXT_EXTENSIONS = new Set([
   'dockerfile', 'makefile', 'cmake', 'gradle', 'properties',
   'log', 'diff', 'patch',
   'vue', 'svelte', 'astro',
+  'ejs', 'erb', 'hbs', 'handlebars', 'mustache', 'pug', 'jade', 'njk', 'jinja', 'jinja2', 'twig',
 ])
 
 const IMAGE_EXTENSIONS = new Set([

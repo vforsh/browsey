@@ -66,6 +66,11 @@ export interface InstanceInfo {
   httpsCert?: string
   httpsKey?: string
   showQR?: boolean
+  // API-specific options
+  showHidden?: boolean
+  ignorePatterns?: string[]
+  watch?: boolean
+  corsOrigin?: string
 }
 
 export interface RegistryFile {
