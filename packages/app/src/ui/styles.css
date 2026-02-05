@@ -2202,8 +2202,8 @@ body {
 }
 
 .compact-mode .file-item {
-  padding: 8px 16px;
-  min-height: 40px;
+  padding: 4px 16px;
+  min-height: 32px;
 }
 
 .compact-mode .file-icon {
