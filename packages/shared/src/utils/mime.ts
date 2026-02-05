@@ -80,3 +80,15 @@ export function getMimeType(filePath: string): string {
   const ext = extname(filePath).toLowerCase()
   return MIME_TYPES[ext] || 'application/octet-stream'
 }
+
+/**
+ * Extract file extension, handling dotfiles like `.env.local` → `'env'`.
+ * Returns the extension without leading dot, or `null` for no extension.
+ */
+export function getFileExtension(filename: string): string | null {
+  const base = filename.startsWith('/') ? filename.split('/').pop()! : filename.split('/').pop()!
+  // .env, .env.local, .env.production, etc. → 'env'
+  if (/^\.env(\..+)?$/.test(base)) return 'env'
+  const ext = extname(base).slice(1)
+  return ext || null
+}

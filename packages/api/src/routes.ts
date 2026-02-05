@@ -1,6 +1,6 @@
 import { promises as fs } from 'fs'
 import { basename, extname, join, relative } from 'path'
-import { getMimeType, resolveSafePath, createIgnoreMatcher } from '@vforsh/browsey-shared'
+import { getMimeType, getFileExtension, resolveSafePath, createIgnoreMatcher } from '@vforsh/browsey-shared'
 import type { IgnoreMatcher } from '@vforsh/browsey-shared'
 import { getGitStatus, getGitLog, getGitChanges } from './git.js'
 import type { ApiRoutesOptions, FileItem, ListResponse, SearchResult, SearchResponse, GitStatusResponse, GitLogResponse, GitChangesResponse } from '@vforsh/browsey-shared'
@@ -141,7 +141,7 @@ async function handleList(url: URL, options: ApiRoutesOptions): Promise<Response
           type: entry.isDirectory() ? 'directory' : 'file',
           size: entryStat.size,
           modified: entryStat.mtime.toISOString(),
-          extension: entry.isFile() ? extname(entry.name).slice(1) || null : null,
+          extension: entry.isFile() ? getFileExtension(entry.name) : null,
           absolutePath: entryPath,
         })
       } catch {
@@ -234,7 +234,7 @@ async function handleView(url: URL, options: ApiRoutesOptions): Promise<Response
       return jsonResponse({ error: 'Cannot view directory' }, { status: 400 })
     }
 
-    const extension = extname(safePath.fullPath).slice(1) || null
+    const extension = getFileExtension(basename(safePath.fullPath))
     const viewableType = getViewableType(extension, stat.size)
 
     if (!viewableType) {
@@ -294,7 +294,7 @@ async function handleStat(url: URL, options: ApiRoutesOptions): Promise<Response
       size: stat.size,
       modified: stat.mtime.toISOString(),
       created: stat.birthtime.toISOString(),
-      extension: stat.isFile() ? extname(safePath.fullPath).slice(1) || null : null,
+      extension: stat.isFile() ? getFileExtension(basename(safePath.fullPath)) : null,
     })
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code
@@ -400,7 +400,7 @@ async function searchRecursive(
           absolutePath: entryPath,
           type: entry.isDirectory() ? 'directory' : 'file',
           score,
-          extension: entry.isFile() ? extname(entry.name).slice(1) || null : null,
+          extension: entry.isFile() ? getFileExtension(entry.name) : null,
         })
       }
 

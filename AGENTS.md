@@ -74,21 +74,36 @@ bun run typecheck    # Type checking (all packages)
 bun run build        # Build distribution executable
 ```
 
-## CLI Usage
+## CLI Cheatsheet
 
 ```bash
-browsey                               # Shows help
-browsey api [path]                    # Start API server (alias: service)
-browsey app --api <url>               # Start UI server (alias: ui)
-browsey list                          # List running instances (alias: ls)
-browsey stop [target]                 # Stop instances (alias: kill)
+# Start both servers (API + App) in one command
+browsey start [path]                  # alias: serve
+browsey start -p 4200 --app-port 4201 --open
+
+# Start servers individually
+browsey api [path]                    # alias: service (default port 4200)
+browsey app --api <url>               # alias: ui (default port 4201)
+
+# Manage instances
+browsey list                          # alias: ls (--json for JSON output)
+browsey stop [target]                 # alias: kill — target: PID, :port, or path
+browsey stop --all                    # stop everything
+browsey stop --force                  # SIGKILL
+
+# Reload running instances (picks up code changes)
+browsey api reload <target>           # target: PID, :port, or path
+browsey app reload <target>           # alias: restart
 ```
 
+### `browsey start` options
+`-p/--port` (API, default 4200), `--app-port` (App, default 4201), `-h/--host` (default 0.0.0.0), `-i/--ignore`, `--no-readonly`, `--hidden`, `--no-qr`, `--https`, `--https-cert`, `--https-key`, `-w/--watch`, `--cors <origin>` (default `*`), `--open`
+
 ### `browsey api` options
-`-p/--port` (default 4200), `-h/--host` (default 0.0.0.0), `-i/--ignore`, `--no-readonly`, `--hidden`, `--no-qr`, `--no-https`, `--https-cert`, `--https-key`, `-w/--watch`, `--cors <origin>` (default `*`)
+`-p/--port` (default 4200), `-h/--host` (default 0.0.0.0), `-i/--ignore`, `--no-readonly`, `--hidden`, `--no-qr`, `--https`, `--https-cert`, `--https-key`, `-w/--watch`, `--cors <origin>` (default `*`)
 
 ### `browsey app` options
-`-p/--port` (default 4201), `-h/--host` (default 0.0.0.0), `--api <url>` (**required**), `--open`, `--no-https`, `--https-cert`, `--https-key`, `--no-qr`
+`-p/--port` (default 4201), `-h/--host` (default 0.0.0.0), `--api <url>` (optional, configure in browser if omitted), `--open`, `--https`, `--https-cert`, `--https-key`, `--no-qr`, `-w/--watch`
 
 ## API Endpoints
 
