@@ -163,12 +163,23 @@ browsey app reload <target>           # alias: restart
 - Bundler module resolution
 - Composite projects with project references
 
+## Running Instances
+
+API and UI servers are always running on this device:
+- **API**: port `4200` (serves `~/dev`)
+- **UI**: port `4201` (connects to API at `http://192.168.1.12:4200`)
+
+After code changes, **rebuild** (`bun run build`) then **reload** the affected instance:
+- `packages/api/` or `packages/shared/` changes → `browsey api reload :4200`
+- `packages/app/` changes → `browsey app reload :4201`
+- Both → reload both
+
 ## Guidelines for Changes
 
 1. **Type safety**: Maintain strict TypeScript - no `any` types
 2. **Security**: All file paths must use `resolveSafePath()` before filesystem access
 3. **Mobile support**: Test touch interactions and responsive layout
-4. **Build after changes**: Run `bun run build` to regenerate the executable
+4. **Build after changes**: Run `bun run build` to regenerate the executable, then reload the affected instance(s)
 5. **No over-engineering**: Keep solutions simple and focused on the task
 6. **Cross-package imports**: Use `@vforsh/browsey-shared` for shared types/utils
 

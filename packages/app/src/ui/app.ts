@@ -5,10 +5,12 @@ import {
   FileCog,
   FileText,
   Folder,
+  FolderHeart,
   FolderOpen,
   Image,
   Info,
   Music,
+  Star,
   Video,
   TriangleAlert,
 } from 'lucide-static'
@@ -27,6 +29,37 @@ declare global {
 function apiUrl(path: string): string {
   const base = window.__BROWSEY_API_BASE__ || ''
   return base + path
+}
+
+const FAVORITES_KEY = 'browsey-favorites'
+
+function getFavorites(): Set<string> {
+  try {
+    const raw = localStorage.getItem(FAVORITES_KEY)
+    return raw ? new Set(JSON.parse(raw)) : new Set()
+  } catch {
+    return new Set()
+  }
+}
+
+function setFavorites(favs: Set<string>): void {
+  localStorage.setItem(FAVORITES_KEY, JSON.stringify([...favs]))
+}
+
+function toggleFavorite(absolutePath: string): boolean {
+  const favs = getFavorites()
+  if (favs.has(absolutePath)) {
+    favs.delete(absolutePath)
+    setFavorites(favs)
+    return false
+  }
+  favs.add(absolutePath)
+  setFavorites(favs)
+  return true
+}
+
+function isFavorite(absolutePath: string): boolean {
+  return getFavorites().has(absolutePath)
 }
 
 type FileItem = {
@@ -249,6 +282,20 @@ class FileViewer {
   private onClose?: () => void
   private onNavigate?: (path: string) => void
 
+  // Image zoom/pan state
+  private imageZoom = 1
+  private panX = 0
+  private panY = 0
+  private navHidden = false
+  private pinchStartDist = 0
+  private pinchStartZoom = 1
+  private pinchStartPanX = 0
+  private pinchStartPanY = 0
+  private pinchMidX = 0
+  private pinchMidY = 0
+  private dragStartPanX = 0
+  private dragStartPanY = 0
+
   constructor(onClose?: () => void, onNavigate?: (path: string) => void) {
     this.overlayTarget = {
       container: document.getElementById('viewer-overlay')!,
@@ -329,15 +376,18 @@ class FileViewer {
       }
     })
 
-    // Swipe handling for mobile (overlay only)
+    // Swipe handling for mobile (overlay only, single-finger only)
     let touchStartX = 0
     let touchStartY = 0
+    let wasPinch = false
     this.overlayTarget.container.addEventListener('touchstart', (e) => {
+      wasPinch = e.touches.length >= 2
       touchStartX = e.touches[0]?.clientX ?? 0
       touchStartY = e.touches[0]?.clientY ?? 0
     }, { passive: true })
 
     this.overlayTarget.container.addEventListener('touchend', (e) => {
+      if (wasPinch || this.imageZoom > 1) return
       const touchEndX = e.changedTouches[0]?.clientX ?? 0
       const touchEndY = e.changedTouches[0]?.clientY ?? 0
       const deltaX = touchEndX - touchStartX
@@ -560,9 +610,10 @@ class FileViewer {
       nextBtn?.addEventListener('click', () => this.navigateNext())
     }
 
-    const image = this.activeTarget.content.querySelector('img')
+    const image = this.activeTarget.content.querySelector('img') as HTMLImageElement | null
     const infoEl = this.activeTarget.content.querySelector('.image-info')
     if (!image) return
+
     image.addEventListener('load', () => {
       const width = image.naturalWidth
       const height = image.naturalHeight
@@ -572,7 +623,304 @@ class FileViewer {
       }
     }, { once: true })
 
+    // Reset zoom/pan state
+    this.imageZoom = 1
+    this.panX = 0
+    this.panY = 0
+    this.navHidden = false
+
+    const clampPan = () => {
+      const container = image.parentElement!
+      const cw = container.clientWidth
+      const ch = container.clientHeight
+      const iw = image.offsetWidth * this.imageZoom
+      const ih = image.offsetHeight * this.imageZoom
+      const marginX = cw * 0.1
+      const marginY = ch * 0.1
+
+      if (iw <= cw) {
+        this.panX = 0
+      } else {
+        const maxPan = (iw - cw) / 2 + marginX
+        this.panX = Math.max(-maxPan, Math.min(maxPan, this.panX))
+      }
+
+      if (ih <= ch) {
+        this.panY = 0
+      } else {
+        const maxPan = (ih - ch) / 2 + marginY
+        this.panY = Math.max(-maxPan, Math.min(maxPan, this.panY))
+      }
+    }
+
+    const applyTransform = (animate = false) => {
+      clampPan()
+      image.style.transition = animate ? 'transform 0.2s ease' : 'none'
+      if (this.imageZoom === 1 && this.panX === 0 && this.panY === 0) {
+        image.style.transform = ''
+      } else {
+        image.style.transform = `translate(${this.panX}px, ${this.panY}px) scale(${this.imageZoom})`
+      }
+    }
+
+    const resetZoomAndPan = () => {
+      stopInertia()
+      this.imageZoom = 1
+      this.panX = 0
+      this.panY = 0
+      applyTransform(true)
+    }
+
+    const zoomTo2x = () => {
+      stopInertia()
+      this.imageZoom = 2
+      this.panX = 0
+      this.panY = 0
+      applyTransform(true)
+    }
+
+    const toggleNav = () => {
+      this.navHidden = !this.navHidden
+      this.activeTarget.content.querySelectorAll('.image-nav-overlay').forEach((btn) => {
+        btn.classList.toggle('nav-hidden', this.navHidden)
+      })
+    }
+
+    // --- Gesture recognizer ---
+    // Tracks taps, drags, and pinches on the image using raw touch/mouse events.
+    // A "tap" is a pointer down+up with <6px movement and <300ms duration.
+    // Two taps within 300ms = double-tap → zoom toggle.
+    // Single tap (after 300ms timeout) → toggle nav arrows.
+    // Drag (when zoomed) = pointer down + move >6px.
+    // Pinch = two-finger touch.
+
+    const TAP_THRESHOLD = 6
+    const DOUBLE_TAP_MS = 300
+    const INERTIA_FRICTION = 0.92
+    const INERTIA_MIN_VELOCITY = 0.5
+    let lastTapTime = 0
+    let pointerDownX = 0
+    let pointerDownY = 0
+    let pointerDownTime = 0
+    let didDrag = false
+    let isPointerDown = false
+    let lastTouchEnd = 0 // track touch→mouse suppression
+
+    // Velocity tracking for inertia
+    let lastMoveX = 0
+    let lastMoveY = 0
+    let lastMoveTime = 0
+    let velocityX = 0
+    let velocityY = 0
+    let inertiaRaf = 0
+
+    const stopInertia = () => {
+      if (inertiaRaf) {
+        cancelAnimationFrame(inertiaRaf)
+        inertiaRaf = 0
+      }
+    }
+
+    const startInertia = () => {
+      stopInertia()
+      if (Math.abs(velocityX) < INERTIA_MIN_VELOCITY && Math.abs(velocityY) < INERTIA_MIN_VELOCITY) return
+      const step = () => {
+        velocityX *= INERTIA_FRICTION
+        velocityY *= INERTIA_FRICTION
+        if (Math.abs(velocityX) < INERTIA_MIN_VELOCITY && Math.abs(velocityY) < INERTIA_MIN_VELOCITY) {
+          inertiaRaf = 0
+          return
+        }
+        this.panX += velocityX
+        this.panY += velocityY
+        applyTransform()
+        inertiaRaf = requestAnimationFrame(step)
+      }
+      inertiaRaf = requestAnimationFrame(step)
+    }
+
+    const trackVelocity = (x: number, y: number) => {
+      const now = performance.now()
+      const dt = now - lastMoveTime
+      if (dt > 0 && dt < 100) {
+        velocityX = (x - lastMoveX) / dt * 16 // normalize to ~per-frame
+        velocityY = (y - lastMoveY) / dt * 16
+      } else {
+        velocityX = 0
+        velocityY = 0
+      }
+      lastMoveX = x
+      lastMoveY = y
+      lastMoveTime = now
+    }
+
+    const handleTap = () => {
+      const now = Date.now()
+      if (now - lastTapTime < DOUBLE_TAP_MS) {
+        // Double-tap
+        lastTapTime = 0
+        if (this.imageZoom > 1) {
+          resetZoomAndPan()
+        } else {
+          zoomTo2x()
+        }
+      } else {
+        // Possible single-tap — wait to see if a second tap comes
+        lastTapTime = now
+        setTimeout(() => {
+          if (lastTapTime === now) {
+            lastTapTime = 0
+            toggleNav()
+          }
+        }, DOUBLE_TAP_MS)
+      }
+    }
+
+    // -- Mouse events (desktop, skip synthesized events from touch) --
+    image.addEventListener('mousedown', (e) => {
+      if (Date.now() - lastTouchEnd < 500) return // ignore synthesized mouse after touch
+      e.preventDefault() // prevent native image drag
+      pointerDownX = e.clientX
+      pointerDownY = e.clientY
+      pointerDownTime = Date.now()
+      didDrag = false
+      isPointerDown = true
+
+      if (this.imageZoom > 1) {
+        stopInertia()
+        this.dragStartPanX = this.panX
+        this.dragStartPanY = this.panY
+        image.style.cursor = 'grabbing'
+        lastMoveX = e.clientX
+        lastMoveY = e.clientY
+        lastMoveTime = performance.now()
+        velocityX = 0
+        velocityY = 0
+      }
+
+      const onMouseMove = (ev: MouseEvent) => {
+        const dx = ev.clientX - pointerDownX
+        const dy = ev.clientY - pointerDownY
+        if (!didDrag && Math.hypot(dx, dy) > TAP_THRESHOLD) didDrag = true
+        if (didDrag && this.imageZoom > 1) {
+          trackVelocity(ev.clientX, ev.clientY)
+          this.panX = this.dragStartPanX + dx
+          this.panY = this.dragStartPanY + dy
+          applyTransform()
+        }
+      }
+
+      const onMouseUp = () => {
+        document.removeEventListener('mousemove', onMouseMove)
+        document.removeEventListener('mouseup', onMouseUp)
+        isPointerDown = false
+        image.style.cursor = this.imageZoom > 1 ? 'grab' : ''
+        image.style.transition = ''
+
+        if (!didDrag && Date.now() - pointerDownTime < 300) {
+          handleTap()
+        } else if (didDrag && this.imageZoom > 1) {
+          startInertia()
+        }
+      }
+
+      document.addEventListener('mousemove', onMouseMove)
+      document.addEventListener('mouseup', onMouseUp)
+    })
+
+    // Suppress native click/dblclick — we handle taps ourselves
+    image.addEventListener('click', (e) => e.preventDefault())
+    image.addEventListener('dblclick', (e) => e.preventDefault())
+
+    // -- Touch events (mobile) --
+    let touchDragActive = false
+
+    image.addEventListener('touchstart', (e) => {
+      if (e.touches.length === 2) {
+        // Pinch start
+        e.preventDefault()
+        touchDragActive = false
+        this.pinchStartDist = this.getTouchDistance(e.touches)
+        this.pinchStartZoom = this.imageZoom
+        this.pinchStartPanX = this.panX
+        this.pinchStartPanY = this.panY
+        this.pinchMidX = (e.touches[0]!.clientX + e.touches[1]!.clientX) / 2
+        this.pinchMidY = (e.touches[0]!.clientY + e.touches[1]!.clientY) / 2
+      } else if (e.touches.length === 1) {
+        pointerDownX = e.touches[0]!.clientX
+        pointerDownY = e.touches[0]!.clientY
+        pointerDownTime = Date.now()
+        didDrag = false
+        touchDragActive = false
+        if (this.imageZoom > 1) {
+          stopInertia()
+          this.dragStartPanX = this.panX
+          this.dragStartPanY = this.panY
+          lastMoveX = e.touches[0]!.clientX
+          lastMoveY = e.touches[0]!.clientY
+          lastMoveTime = performance.now()
+          velocityX = 0
+          velocityY = 0
+        }
+      }
+    }, { passive: false })
+
+    image.addEventListener('touchmove', (e) => {
+      if (e.touches.length === 2) {
+        e.preventDefault()
+        const dist = this.getTouchDistance(e.touches)
+        const scale = dist / this.pinchStartDist
+        this.imageZoom = Math.min(Math.max(this.pinchStartZoom * scale, 0.5), 5)
+        const midX = (e.touches[0]!.clientX + e.touches[1]!.clientX) / 2
+        const midY = (e.touches[0]!.clientY + e.touches[1]!.clientY) / 2
+        this.panX = this.pinchStartPanX + (midX - this.pinchMidX)
+        this.panY = this.pinchStartPanY + (midY - this.pinchMidY)
+        applyTransform()
+      } else if (e.touches.length === 1) {
+        const dx = e.touches[0]!.clientX - pointerDownX
+        const dy = e.touches[0]!.clientY - pointerDownY
+        if (!didDrag && Math.hypot(dx, dy) > TAP_THRESHOLD) didDrag = true
+        if (didDrag && this.imageZoom > 1) {
+          if (!touchDragActive) {
+            touchDragActive = true
+          }
+          e.preventDefault()
+          trackVelocity(e.touches[0]!.clientX, e.touches[0]!.clientY)
+          this.panX = this.dragStartPanX + dx
+          this.panY = this.dragStartPanY + dy
+          applyTransform()
+        }
+      }
+    }, { passive: false })
+
+    image.addEventListener('touchend', (e) => {
+      lastTouchEnd = Date.now()
+      if (e.touches.length === 0) {
+        // Snap back if pinched below 1x
+        if (this.imageZoom < 1) {
+          resetZoomAndPan()
+        } else if (this.imageZoom === 1) {
+          this.panX = 0
+          this.panY = 0
+          applyTransform(true)
+        }
+
+        // Detect tap (no drag, short duration)
+        if (!didDrag && !touchDragActive && Date.now() - pointerDownTime < 300) {
+          handleTap()
+        } else if (touchDragActive && this.imageZoom > 1) {
+          startInertia()
+        }
+        touchDragActive = false
+      }
+    }, { passive: true })
+
     this.updateControlButtons()
+  }
+
+  private getTouchDistance(touches: TouchList): number {
+    const [a, b] = [touches[0]!, touches[1]!]
+    return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY)
   }
 
   private formatSize(bytes: number): string {
@@ -665,6 +1013,17 @@ class InfoModal {
       this.close()
     })
 
+    this.content.addEventListener('click', (e) => {
+      const btn = (e.target as HTMLElement).closest('.info-favorite-btn') as HTMLElement | null
+      if (!btn) return
+      const absPath = btn.getAttribute('data-absolute-path')
+      if (!absPath) return
+      const nowFav = toggleFavorite(absPath)
+      btn.classList.toggle('active', nowFav)
+      btn.querySelector('span')!.textContent = nowFav ? 'Remove from Favorites' : 'Add to Favorites'
+      window.dispatchEvent(new CustomEvent('browsey-favorites-changed'))
+    })
+
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape' && !this.overlay.hidden) {
         e.stopPropagation()
@@ -725,6 +1084,17 @@ class InfoModal {
       `
       )
       .join('')
+
+    if (data.type === 'directory' && absolutePath) {
+      const isFav = isFavorite(absolutePath)
+      this.content.insertAdjacentHTML(
+        'beforeend',
+        `<button class="info-favorite-btn${isFav ? ' active' : ''}" data-absolute-path="${this.escapeHtml(absolutePath)}">
+          ${Star}
+          <span>${isFav ? 'Remove from Favorites' : 'Add to Favorites'}</span>
+        </button>`
+      )
+    }
   }
 
   private close(): void {
@@ -2189,6 +2559,13 @@ class FileBrowser {
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Backspace') this.goUp()
     })
+
+    // Re-render when favorites change (toggled from InfoModal)
+    window.addEventListener('browsey-favorites-changed', () => {
+      if (this.currentItems.length > 0) {
+        this.renderItems(this.currentItems)
+      }
+    })
   }
 
   private setupPullToRefresh(): void {
@@ -2444,12 +2821,23 @@ class FileBrowser {
       return
     }
 
-    const html = items
+    // Sort favorite directories to top
+    const favs = getFavorites()
+    const sorted = [...items].sort((a, b) => {
+      const aFav = a.type === 'directory' && favs.has(a.absolutePath)
+      const bFav = b.type === 'directory' && favs.has(b.absolutePath)
+      if (aFav !== bFav) return aFav ? -1 : 1
+      if (a.type !== b.type) return a.type === 'directory' ? -1 : 1
+      return a.name.localeCompare(b.name)
+    })
+
+    const html = sorted
       .map((item) => {
         const itemPath = this.currentPath === '/' ? `/${item.name}` : `${this.currentPath}/${item.name}`
+        const favClass = item.type === 'directory' && favs.has(item.absolutePath) ? ' favorite' : ''
 
         return `
-        <div class="file-item" data-path="${this.escapeHtml(itemPath)}" data-type="${item.type}" data-extension="${item.extension || ''}">
+        <div class="file-item${favClass}" data-path="${this.escapeHtml(itemPath)}" data-type="${item.type}" data-extension="${item.extension || ''}">
           <span class="file-icon">${this.getIcon(item)}</span>
           <div class="file-info">
             <div class="file-name">${this.escapeHtml(item.name)}</div>
@@ -2777,7 +3165,7 @@ class FileBrowser {
   }
 
   private getIcon(item: FileItem): string {
-    if (item.type === 'directory') return Folder
+    if (item.type === 'directory') return isFavorite(item.absolutePath) ? FolderHeart : Folder
 
     const iconMap: Record<string, string> = {
       // Documents
