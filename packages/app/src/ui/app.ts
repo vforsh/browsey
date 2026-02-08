@@ -282,6 +282,9 @@ class FileViewer {
   private onClose?: () => void
   private onNavigate?: (path: string) => void
 
+  // Preload cache for adjacent images
+  private viewCache = new Map<string, ViewResponse>()
+
   // Image zoom/pan state
   private imageZoom = 1
   private panX = 0
@@ -524,6 +527,12 @@ class FileViewer {
     this.activeTarget.filename.textContent = path.split('/').pop() || ''
     this.hideAllControlButtons()
 
+    const cached = this.viewCache.get(path)
+    if (cached) {
+      this.render(cached)
+      return
+    }
+
     try {
       const response = await fetch(apiUrl(`/api/view?path=${encodeURIComponent(path)}`))
       if (!response.ok) {
@@ -629,26 +638,26 @@ class FileViewer {
     this.panY = 0
     this.navHidden = false
 
+    const CONTAINER_PADDING = 16
+
     const clampPan = () => {
       const container = image.parentElement!
       const cw = container.clientWidth
       const ch = container.clientHeight
       const iw = image.offsetWidth * this.imageZoom
       const ih = image.offsetHeight * this.imageZoom
-      const marginX = cw * 0.1
-      const marginY = ch * 0.1
 
       if (iw <= cw) {
         this.panX = 0
       } else {
-        const maxPan = (iw - cw) / 2 + marginX
+        const maxPan = (iw - cw) / 2 + CONTAINER_PADDING
         this.panX = Math.max(-maxPan, Math.min(maxPan, this.panX))
       }
 
       if (ih <= ch) {
         this.panY = 0
       } else {
-        const maxPan = (ih - ch) / 2 + marginY
+        const maxPan = (ih - ch) / 2 + CONTAINER_PADDING
         this.panY = Math.max(-maxPan, Math.min(maxPan, this.panY))
       }
     }
@@ -684,6 +693,7 @@ class FileViewer {
       this.activeTarget.content.querySelectorAll('.image-nav-overlay').forEach((btn) => {
         btn.classList.toggle('nav-hidden', this.navHidden)
       })
+      infoEl?.classList.toggle('info-hidden', this.navHidden)
     }
 
     // --- Gesture recognizer ---
@@ -916,6 +926,7 @@ class FileViewer {
     }, { passive: true })
 
     this.updateControlButtons()
+    this.preloadAdjacentImages()
   }
 
   private getTouchDistance(touches: TouchList): number {
@@ -928,6 +939,27 @@ class FileViewer {
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
     if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
     return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`
+  }
+
+  private preloadAdjacentImages(): void {
+    if (!this.imageNav) return
+    const { paths, index } = this.imageNav
+    const neighbors = [paths[index - 1], paths[index + 1]].filter(
+      (p): p is string => p !== undefined && !this.viewCache.has(p)
+    )
+    for (const path of neighbors) {
+      fetch(apiUrl(`/api/view?path=${encodeURIComponent(path)}`))
+        .then((r) => (r.ok ? r.json() : null))
+        .then((data: ViewResponse | null) => {
+          if (!data || !this.imageNav) return
+          this.viewCache.set(path, data)
+          if (data.type === 'image') {
+            const img = document.createElement('img')
+            img.src = apiUrl(data.url)
+          }
+        })
+        .catch(() => {})
+    }
   }
 
   private renderError(message: string): void {
@@ -952,6 +984,7 @@ class FileViewer {
     this.currentPath = null
     this.imageNav = null
     this.currentContentType = null
+    this.viewCache.clear()
     this.activeTarget.content.innerHTML = ''
     this.updateControlButtons()
     if (!shouldNotify) return

@@ -772,21 +772,25 @@ body {
   bottom: 12px;
   left: 50%;
   transform: translateX(-50%);
-  font-size: 12px;
+  font-size: 13px;
   color: var(--text-secondary);
   background: rgba(0, 0, 0, 0.5);
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
-  padding: 4px 12px;
+  padding: 5px 12px;
   border-radius: 12px;
   white-space: nowrap;
   pointer-events: none;
   opacity: 0;
-  transition: opacity 0.2s ease;
+  transition: opacity 66ms ease;
 }
 
 .image-info:not(:empty) {
   opacity: 1;
+}
+
+.image-info.info-hidden {
+  opacity: 0 !important;
 }
 
 /* Image nav overlay buttons */
