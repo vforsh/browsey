@@ -2456,6 +2456,7 @@ class FileBrowser {
   private currentPath = '/'
   private currentAbsolutePath = ''
   private currentItems: FileItem[] = []
+  private scrollPositions = new Map<string, number>()
   private fileList: HTMLElement
   private pathDisplay: HTMLElement
   private loading: HTMLElement
@@ -2739,6 +2740,11 @@ class FileBrowser {
     path: string,
     options: { updateHistory?: boolean; replaceHistory?: boolean; openViewerPath?: string } = {}
   ): Promise<void> {
+    // Save scroll position of current directory before leaving
+    if (this.currentPath) {
+      this.scrollPositions.set(this.currentPath, this.fileList.scrollTop)
+    }
+
     // Normalize path
     path = path.replace(/\/+/g, '/').replace(/\/$/, '') || '/'
     this.currentPath = path
@@ -2763,6 +2769,13 @@ class FileBrowser {
       this.currentItems = data.items
       this.currentAbsolutePath = data.absolutePath
       this.renderItems(data.items)
+
+      // Restore scroll position if returning to a previously visited directory
+      const savedScroll = this.scrollPositions.get(path)
+      if (savedScroll !== undefined) {
+        this.fileList.scrollTop = savedScroll
+      }
+
       this.gitStatusBar.update(path)
       if (options.openViewerPath) {
         const inline = isTwoPaneMode()
