@@ -298,6 +298,7 @@ body {
   color: var(--folder-color);
 }
 
+
 .file-item[data-type="file"] .file-icon {
   color: var(--file-color);
 }
@@ -976,23 +977,36 @@ body {
   word-break: break-all;
 }
 
+.info-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 8px 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  flex-shrink: 0;
+}
+
+.info-footer[hidden] {
+  display: none;
+}
+
 .info-favorite-btn {
   display: flex;
   align-items: center;
-  gap: 8px;
-  width: 100%;
-  padding: 12px 0;
-  margin-top: 4px;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
   border: none;
-  border-top: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 8px;
   background: transparent;
   color: var(--text-secondary);
-  font-size: 14px;
   cursor: pointer;
-  transition: color 0.15s;
+  transition: color 0.15s, background 0.15s;
 }
 
 .info-favorite-btn:hover {
+  background: var(--bg-hover);
   color: var(--text-primary);
 }
 
@@ -1000,10 +1014,13 @@ body {
   color: var(--folder-color);
 }
 
+.info-favorite-btn.active svg {
+  fill: currentColor;
+}
+
 .info-favorite-btn svg {
   width: 20px;
   height: 20px;
-  flex-shrink: 0;
 }
 
 /* Search Overlay */

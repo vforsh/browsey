@@ -182,6 +182,7 @@ After code changes, **rebuild** (`bun run build`) then **reload** the affected i
 4. **Build after changes**: Run `bun run build` to regenerate the executable, then reload the affected instance(s)
 5. **No over-engineering**: Keep solutions simple and focused on the task
 6. **Cross-package imports**: Use `@vforsh/browsey-shared` for shared types/utils
+7. **TODO tracking**: After each commit, check `TODO.md` — if the committed work completes a listed task, remove it and renumber the remaining items
 
 ## Dependencies
 

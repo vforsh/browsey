@@ -5,7 +5,6 @@ import {
   FileCog,
   FileText,
   Folder,
-  FolderHeart,
   FolderOpen,
   Image,
   Info,
@@ -1023,12 +1022,14 @@ class FileViewer {
 class InfoModal {
   private overlay: HTMLElement
   private content: HTMLElement
+  private footer: HTMLElement
   private title: HTMLElement
   private closeBtn: HTMLElement
 
   constructor() {
     this.overlay = document.getElementById('info-overlay')!
     this.content = document.getElementById('info-content')!
+    this.footer = document.getElementById('info-footer')!
     this.title = document.getElementById('info-title')!
     this.closeBtn = document.getElementById('info-close')!
 
@@ -1046,14 +1047,14 @@ class InfoModal {
       this.close()
     })
 
-    this.content.addEventListener('click', (e) => {
+    this.footer.addEventListener('click', (e) => {
       const btn = (e.target as HTMLElement).closest('.info-favorite-btn') as HTMLElement | null
       if (!btn) return
       const absPath = btn.getAttribute('data-absolute-path')
       if (!absPath) return
       const nowFav = toggleFavorite(absPath)
       btn.classList.toggle('active', nowFav)
-      btn.querySelector('span')!.textContent = nowFav ? 'Remove from Favorites' : 'Add to Favorites'
+      btn.setAttribute('aria-label', nowFav ? 'Remove from Favorites' : 'Add to Favorites')
       window.dispatchEvent(new CustomEvent('browsey-favorites-changed'))
     })
 
@@ -1120,13 +1121,13 @@ class InfoModal {
 
     if (data.type === 'directory' && absolutePath) {
       const isFav = isFavorite(absolutePath)
-      this.content.insertAdjacentHTML(
-        'beforeend',
-        `<button class="info-favorite-btn${isFav ? ' active' : ''}" data-absolute-path="${this.escapeHtml(absolutePath)}">
+      this.footer.hidden = false
+      this.footer.innerHTML = `<button class="info-favorite-btn${isFav ? ' active' : ''}" data-absolute-path="${this.escapeHtml(absolutePath)}" aria-label="${isFav ? 'Remove from Favorites' : 'Add to Favorites'}">
           ${Star}
-          <span>${isFav ? 'Remove from Favorites' : 'Add to Favorites'}</span>
         </button>`
-      )
+    } else {
+      this.footer.hidden = true
+      this.footer.innerHTML = ''
     }
   }
 
@@ -3211,7 +3212,7 @@ class FileBrowser {
   }
 
   private getIcon(item: FileItem): string {
-    if (item.type === 'directory') return isFavorite(item.absolutePath) ? FolderHeart : Folder
+    if (item.type === 'directory') return isFavorite(item.absolutePath) ? Star : Folder
 
     const iconMap: Record<string, string> = {
       // Documents
