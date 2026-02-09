@@ -540,8 +540,7 @@ body {
   font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Fira Code', 'Fira Mono', 'Droid Sans Mono', 'Source Code Pro', monospace;
   font-size: 13px;
   line-height: 1.5;
-  white-space: pre-wrap;
-  word-wrap: break-word;
+  white-space: pre;
   tab-size: 2;
   transition: font-size 0.15s ease;
 }
