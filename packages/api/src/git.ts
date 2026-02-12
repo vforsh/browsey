@@ -206,13 +206,13 @@ export async function getGitChanges(path: string): Promise<GitChangesResponse> {
   const repoRoot = await findGitRoot(path)
 
   if (!repoRoot) {
-    return { staged: [], unstaged: [], untracked: [] }
+    return { repoPath: null, staged: [], unstaged: [], untracked: [] }
   }
 
   const statusOutput = await runGitCommand(repoRoot, ['status', '--porcelain'])
 
   if (!statusOutput) {
-    return { staged: [], unstaged: [], untracked: [] }
+    return { repoPath: null, staged: [], unstaged: [], untracked: [] }
   }
 
   const staged: GitChangeFile[] = []
@@ -245,5 +245,5 @@ export async function getGitChanges(path: string): Promise<GitChangesResponse> {
     }
   }
 
-  return { staged, unstaged, untracked }
+  return { repoPath: repoRoot, staged, unstaged, untracked }
 }

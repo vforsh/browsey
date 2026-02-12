@@ -506,7 +506,19 @@ async function handleGitChanges(url: URL, options: ApiRoutesOptions): Promise<Re
 
   try {
     const result = await getGitChanges(safePath.fullPath)
-    const response: GitChangesResponse = result
+    let repoPath: string | null = null
+    if (result.repoPath) {
+      const relativeRepoPath = relative(options.root, result.repoPath)
+      if (relativeRepoPath && !relativeRepoPath.startsWith('..') && !relativeRepoPath.startsWith('/')) {
+        repoPath = '/' + relativeRepoPath.replace(/\\/g, '/')
+      } else if (relativeRepoPath === '') {
+        repoPath = '/'
+      }
+    }
+    const response: GitChangesResponse = {
+      ...result,
+      repoPath,
+    }
     return jsonResponse(response)
   } catch {
     return jsonResponse({ error: 'Internal server error' }, { status: 500 })

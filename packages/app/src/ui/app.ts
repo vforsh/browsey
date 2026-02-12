@@ -1697,6 +1697,7 @@ type GitChangeFile = {
 }
 
 type GitChangesResponse = {
+  repoPath: string | null
   staged: GitChangeFile[]
   unstaged: GitChangeFile[]
   untracked: GitChangeFile[]
@@ -1715,8 +1716,11 @@ class GitChangesOverlay {
   private content: HTMLElement
   private closeBtn: HTMLElement
   private currentPath: string = '/'
+  private repoPath: string | null = null
+  private onOpenFile?: (path: string) => void
 
-  constructor() {
+  constructor(onOpenFile?: (path: string) => void) {
+    this.onOpenFile = onOpenFile
     this.overlay = document.getElementById('git-changes-overlay')!
     this.content = document.getElementById('git-changes-content')!
     this.closeBtn = document.getElementById('git-changes-close')!
@@ -1754,6 +1758,17 @@ class GitChangesOverlay {
         return
       }
 
+      // Open changed file content
+      const fileItem = target.closest('.git-changes-tree-item.file') as HTMLElement | null
+      if (fileItem) {
+        const relativeFilePath = fileItem.getAttribute('data-file-path')
+        if (!relativeFilePath) return
+        const fullPath = this.resolveChangedFilePath(relativeFilePath)
+        this.close()
+        this.onOpenFile?.(fullPath)
+        return
+      }
+
       // Directory tree item toggle
       const dirItem = target.closest('.git-changes-tree-item.directory')
       if (dirItem) {
@@ -1769,6 +1784,7 @@ class GitChangesOverlay {
 
   async open(path: string): Promise<void> {
     this.currentPath = path
+    this.repoPath = null
     this.overlay.hidden = false
     this.content.innerHTML = '<div class="git-changes-loading">Loading changes...</div>'
 
@@ -1779,6 +1795,7 @@ class GitChangesOverlay {
       }
 
       const data: GitChangesResponse = await response.json()
+      this.repoPath = data.repoPath
       this.render(data)
     } catch (error) {
       this.content.innerHTML = `<div class="git-changes-error">${error instanceof Error ? error.message : 'Failed to load changes'}</div>`
@@ -1788,6 +1805,7 @@ class GitChangesOverlay {
   close(): void {
     this.overlay.hidden = true
     this.content.innerHTML = ''
+    this.repoPath = null
   }
 
   private render(data: GitChangesResponse): void {
@@ -1926,9 +1944,10 @@ class GitChangesOverlay {
     const indentHtml = Array(depth).fill('<span class="git-changes-tree-indent"></span>').join('')
     const status = node.statusLabel || '?'
     const statusClass = isUntracked ? 'untracked' : status
+    const filePath = node.file?.path ?? ''
 
     return `
-      <div class="git-changes-tree-item" style="padding-left: ${16 + depth * 16}px">
+      <div class="git-changes-tree-item file" data-file-path="${this.escapeHtml(filePath)}" style="padding-left: ${16 + depth * 16}px">
         ${indentHtml}
         <span class="git-changes-tree-indent"></span>
         <svg class="git-changes-tree-icon file" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -1939,6 +1958,13 @@ class GitChangesOverlay {
         <span class="git-changes-tree-status ${this.escapeHtml(statusClass)}">${this.escapeHtml(status)}</span>
       </div>
     `
+  }
+
+  private resolveChangedFilePath(relativeFilePath: string): string {
+    const basePath = this.repoPath || this.currentPath
+    const baseSegments = basePath.split('/').filter(Boolean)
+    const fileSegments = relativeFilePath.split('/').filter(Boolean)
+    return '/' + [...baseSegments, ...fileSegments].join('/')
   }
 
   private escapeHtml(text: string): string {
@@ -2499,7 +2525,7 @@ class FileBrowser {
       (path, highlightFile) => this.handleSearchNavigation(path, highlightFile)
     )
     this.gitHistoryOverlay = new GitHistoryOverlay((hash) => this.copyToClipboard(hash, 'Hash copied'))
-    this.gitChangesOverlay = new GitChangesOverlay()
+    this.gitChangesOverlay = new GitChangesOverlay((path) => this.openChangedFile(path))
     this.gitStatusBar = new GitStatusBar(
       (path) => this.gitHistoryOverlay.open(path),
       (path) => this.gitChangesOverlay.open(path)
@@ -3044,6 +3070,21 @@ class FileBrowser {
     const nav = this.getImageNavContext(path)
     this.viewer.open(path, nav, true)
     this.updateHistory(path, true, false)
+  }
+
+  private openChangedFile(path: string): void {
+    const filename = path.split('/').pop() || ''
+    const extension = filename.includes('.') ? filename.split('.').pop()?.toLowerCase() || null : null
+    const viewableType = isViewable(extension)
+    if (viewableType) {
+      if (isTwoPaneMode()) {
+        this.openInlineViewer(path)
+      } else {
+        this.openViewer(path)
+      }
+      return
+    }
+    this.downloadFile(path)
   }
 
   private closePreview(): void {

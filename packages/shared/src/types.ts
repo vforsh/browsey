@@ -130,6 +130,7 @@ export type GitChangeFile = {
 }
 
 export type GitChangesResponse = {
+  repoPath: string | null
   staged: GitChangeFile[]
   unstaged: GitChangeFile[]
   untracked: GitChangeFile[]
