@@ -5,11 +5,14 @@ import {
   FileCog,
   FileText,
   Folder,
+  FolderInput,
   FolderOpen,
   Image,
   Info,
   Music,
+  Pencil,
   Star,
+  Trash2,
   Video,
   TriangleAlert,
 } from 'lucide-static'
@@ -28,6 +31,19 @@ declare global {
 function apiUrl(path: string): string {
   const base = window.__BROWSEY_API_BASE__ || ''
   return base + path
+}
+
+let isReadonly = true // safe default until fetched from API
+async function fetchReadonly(): Promise<void> {
+  try {
+    const res = await fetch(apiUrl('/api/health'))
+    if (res.ok) {
+      const data = await res.json()
+      isReadonly = data.readonly ?? true
+    }
+  } catch {
+    // keep safe default
+  }
 }
 
 const FAVORITES_KEY = 'browsey-favorites'
@@ -1019,19 +1035,74 @@ class FileViewer {
   }
 }
 
+class ConfirmDialog {
+  private overlay: HTMLElement
+  private message: HTMLElement
+  private cancelBtn: HTMLElement
+  private dangerBtn: HTMLElement
+  private resolve: ((confirmed: boolean) => void) | null = null
+
+  constructor() {
+    this.overlay = document.getElementById('confirm-overlay')!
+    this.message = document.getElementById('confirm-message')!
+    this.cancelBtn = document.getElementById('confirm-cancel')!
+    this.dangerBtn = document.getElementById('confirm-danger')!
+
+    this.cancelBtn.addEventListener('click', () => this.close(false))
+    this.dangerBtn.addEventListener('click', () => this.close(true))
+    this.overlay.addEventListener('click', (e) => {
+      if (e.target === this.overlay) this.close(false)
+    })
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && !this.overlay.hidden) {
+        e.stopPropagation()
+        this.close(false)
+      }
+    })
+  }
+
+  show(message: string): Promise<boolean> {
+    this.message.textContent = message
+    this.overlay.hidden = false
+    this.dangerBtn.focus()
+    return new Promise((resolve) => {
+      this.resolve = resolve
+    })
+  }
+
+  private close(confirmed: boolean): void {
+    this.overlay.hidden = true
+    this.resolve?.(confirmed)
+    this.resolve = null
+  }
+}
+
 class InfoModal {
   private overlay: HTMLElement
   private content: HTMLElement
   private footer: HTMLElement
   private title: HTMLElement
   private closeBtn: HTMLElement
+  private currentPath = ''
+  private currentName = ''
+  private currentType: 'file' | 'directory' = 'file'
+  private onDelete: (path: string, type: 'file' | 'directory') => void
+  private onRename: (path: string, currentName: string) => void
+  private onMove: (path: string) => void
 
-  constructor() {
+  constructor(callbacks: {
+    onDelete: (path: string, type: 'file' | 'directory') => void
+    onRename: (path: string, currentName: string) => void
+    onMove: (path: string) => void
+  }) {
     this.overlay = document.getElementById('info-overlay')!
     this.content = document.getElementById('info-content')!
     this.footer = document.getElementById('info-footer')!
     this.title = document.getElementById('info-title')!
     this.closeBtn = document.getElementById('info-close')!
+    this.onDelete = callbacks.onDelete
+    this.onRename = callbacks.onRename
+    this.onMove = callbacks.onMove
 
     this.setupEventListeners()
   }
@@ -1048,14 +1119,35 @@ class InfoModal {
     })
 
     this.footer.addEventListener('click', (e) => {
-      const btn = (e.target as HTMLElement).closest('.info-favorite-btn') as HTMLElement | null
-      if (!btn) return
-      const absPath = btn.getAttribute('data-absolute-path')
-      if (!absPath) return
-      const nowFav = toggleFavorite(absPath)
-      btn.classList.toggle('active', nowFav)
-      btn.setAttribute('aria-label', nowFav ? 'Remove from Favorites' : 'Add to Favorites')
-      window.dispatchEvent(new CustomEvent('browsey-favorites-changed'))
+      const target = e.target as HTMLElement
+
+      const favBtn = target.closest('.info-favorite-btn') as HTMLElement | null
+      if (favBtn) {
+        const absPath = favBtn.getAttribute('data-absolute-path')
+        if (!absPath) return
+        const nowFav = toggleFavorite(absPath)
+        favBtn.classList.toggle('active', nowFav)
+        favBtn.setAttribute('aria-label', nowFav ? 'Remove from Favorites' : 'Add to Favorites')
+        window.dispatchEvent(new CustomEvent('browsey-favorites-changed'))
+        return
+      }
+
+      const renameBtn = target.closest('.info-rename-btn') as HTMLElement | null
+      if (renameBtn && !renameBtn.hasAttribute('disabled')) {
+        this.onRename(this.currentPath, this.currentName)
+        return
+      }
+
+      const moveBtn = target.closest('.info-move-btn') as HTMLElement | null
+      if (moveBtn && !moveBtn.hasAttribute('disabled')) {
+        this.onMove(this.currentPath)
+        return
+      }
+
+      const deleteBtn = target.closest('.info-delete-btn') as HTMLElement | null
+      if (deleteBtn && !deleteBtn.hasAttribute('disabled')) {
+        this.onDelete(this.currentPath, this.currentType)
+      }
     })
 
     document.addEventListener('keydown', (e) => {
@@ -1069,9 +1161,11 @@ class InfoModal {
   async open(path: string, absolutePath?: string): Promise<void> {
     if (!path) return
 
+    this.currentPath = path
     this.overlay.hidden = false
     this.title.textContent = path.split('/').pop() || 'Info'
     this.content.innerHTML = '<div class="info-loading">Loading...</div>'
+    this.footer.hidden = true
 
     try {
       const response = await fetch(apiUrl(`/api/stat?path=${encodeURIComponent(path)}`))
@@ -1081,6 +1175,8 @@ class InfoModal {
       }
 
       const data: StatResponse = await response.json()
+      this.currentName = data.name
+      this.currentType = data.type
       this.render(data, absolutePath)
     } catch (error) {
       this.content.innerHTML = `<div class="info-error">${this.escapeHtml(error instanceof Error ? error.message : 'Failed to load')}</div>`
@@ -1119,19 +1215,36 @@ class InfoModal {
       )
       .join('')
 
+    // Footer: action buttons (left) + favorite star (right)
+    const isRoot = this.currentPath === '/'
+    const disabled = isReadonly ? ' disabled' : ''
+
+    let leftHtml = ''
+    if (!isRoot) {
+      leftHtml = `
+        <button class="info-action-btn info-rename-btn" aria-label="Rename"${disabled}>${Pencil}</button>
+        <button class="info-action-btn info-move-btn" aria-label="Move"${disabled}>${FolderInput}</button>
+        <button class="info-action-btn info-delete-btn danger" aria-label="Delete"${disabled}>${Trash2}</button>`
+    }
+
+    let rightHtml = ''
     if (data.type === 'directory' && absolutePath) {
       const isFav = isFavorite(absolutePath)
+      rightHtml = `<button class="info-favorite-btn${isFav ? ' active' : ''}" data-absolute-path="${this.escapeHtml(absolutePath)}" aria-label="${isFav ? 'Remove from Favorites' : 'Add to Favorites'}">${Star}</button>`
+    }
+
+    if (leftHtml || rightHtml) {
       this.footer.hidden = false
-      this.footer.innerHTML = `<button class="info-favorite-btn${isFav ? ' active' : ''}" data-absolute-path="${this.escapeHtml(absolutePath)}" aria-label="${isFav ? 'Remove from Favorites' : 'Add to Favorites'}">
-          ${Star}
-        </button>`
+      this.footer.innerHTML = `
+        <div class="info-actions-left">${leftHtml}</div>
+        <div class="info-actions-right">${rightHtml}</div>`
     } else {
       this.footer.hidden = true
       this.footer.innerHTML = ''
     }
   }
 
-  private close(): void {
+  close(): void {
     this.overlay.hidden = true
     this.content.innerHTML = ''
   }
@@ -2505,6 +2618,7 @@ class FileBrowser {
   private selectedFilePath: string | null = null
   private previewPane: HTMLElement
   private previewHeader: HTMLElement
+  private confirmDialog: ConfirmDialog
 
   constructor(dynamicMode = false) {
     this.dynamicMode = dynamicMode
@@ -2516,11 +2630,16 @@ class FileBrowser {
     this.previewHeader = document.getElementById('preview-header')!
     this.pullRefreshIndicator = document.getElementById('pull-refresh-indicator')!
     this.useQueryRouting = isIosStandalone()
+    this.confirmDialog = new ConfirmDialog()
     this.viewer = new FileViewer(
       () => this.handleViewerClose(),
       (path) => this.handleViewerNavigate(path)
     )
-    this.infoModal = new InfoModal()
+    this.infoModal = new InfoModal({
+      onDelete: (path, type) => this.handleFileDelete(path, type),
+      onRename: (path, name) => this.handleFileRename(path, name),
+      onMove: (path) => this.handleFileMove(path),
+    })
     this.searchOverlay = new SearchOverlay(
       (path, highlightFile) => this.handleSearchNavigation(path, highlightFile)
     )
@@ -2545,6 +2664,7 @@ class FileBrowser {
       this.handleLayoutChange(e.matches)
     })
     this.loadFromLocation()
+    fetchReadonly()
   }
 
   private handleSearchNavigation(path: string, highlightFile?: string): void {
@@ -2754,9 +2874,82 @@ class FileBrowser {
     window.__BROWSEY_API_BASE__ = ''
 
     const connectScreen = new ConnectScreen(() => {
+      fetchReadonly()
       this.navigate('/')
     })
     connectScreen.show()
+  }
+
+  private async handleFileDelete(path: string, type: 'file' | 'directory'): Promise<void> {
+    const name = path.split('/').pop() || path
+    const message = type === 'directory'
+      ? `Delete folder "${name}" and all its contents?`
+      : `Delete "${name}"?`
+
+    const confirmed = await this.confirmDialog.show(message)
+    if (!confirmed) return
+
+    try {
+      const res = await fetch(apiUrl('/api/delete'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path }),
+      })
+      if (!res.ok) {
+        const data = await res.json()
+        throw new Error(data.error || 'Failed to delete')
+      }
+      this.infoModal.close()
+      this.showToast('Deleted')
+      this.navigate(this.currentPath, { updateHistory: false })
+    } catch (error) {
+      this.showError(error instanceof Error ? error.message : 'Failed to delete')
+    }
+  }
+
+  private async handleFileMove(path: string): Promise<void> {
+    const parentPath = path.split('/').slice(0, -1).join('/') || '/'
+    const destination = prompt('Move to', parentPath)
+    if (!destination || destination === parentPath) return
+
+    try {
+      const res = await fetch(apiUrl('/api/move'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path, destination }),
+      })
+      if (!res.ok) {
+        const data = await res.json()
+        throw new Error(data.error || 'Failed to move')
+      }
+      this.infoModal.close()
+      this.showToast('Moved')
+      this.navigate(this.currentPath, { updateHistory: false })
+    } catch (error) {
+      this.showError(error instanceof Error ? error.message : 'Failed to move')
+    }
+  }
+
+  private async handleFileRename(path: string, currentName: string): Promise<void> {
+    const newName = prompt('Rename', currentName)
+    if (!newName || newName === currentName) return
+
+    try {
+      const res = await fetch(apiUrl('/api/rename'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path, newName }),
+      })
+      if (!res.ok) {
+        const data = await res.json()
+        throw new Error(data.error || 'Failed to rename')
+      }
+      this.infoModal.close()
+      this.showToast('Renamed')
+      this.navigate(this.currentPath, { updateHistory: false })
+    } catch (error) {
+      this.showError(error instanceof Error ? error.message : 'Failed to rename')
+    }
   }
 
   private applyCompactMode(compact: boolean): void {

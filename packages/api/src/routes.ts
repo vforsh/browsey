@@ -1,5 +1,5 @@
 import { promises as fs } from 'fs'
-import { basename, extname, join, relative } from 'path'
+import { basename, dirname, extname, join, relative } from 'path'
 import { getMimeType, getFileExtension, resolveSafePath, createIgnoreMatcher } from '@vforsh/browsey-shared'
 import type { IgnoreMatcher } from '@vforsh/browsey-shared'
 import { getGitStatus, getGitLog, getGitChanges } from './git.js'
@@ -72,7 +72,7 @@ export async function handleApiRequest(
   const route = url.pathname.slice('/api'.length)
 
   if (route === '/health') {
-    return jsonResponse({ ok: true })
+    return jsonResponse({ ok: true, readonly: options.readonly })
   }
   if (route === '/list') {
     return handleList(url, options)
@@ -97,6 +97,15 @@ export async function handleApiRequest(
   }
   if (route === '/git/changes') {
     return handleGitChanges(url, options)
+  }
+  if (route === '/rename' && req.method === 'POST') {
+    return handleRename(req, options)
+  }
+  if (route === '/delete' && req.method === 'POST') {
+    return handleDelete(req, options)
+  }
+  if (route === '/move' && req.method === 'POST') {
+    return handleMove(req, options)
   }
 
   return jsonResponse({ error: 'Not found' }, { status: 404 })
@@ -521,6 +530,178 @@ async function handleGitChanges(url: URL, options: ApiRoutesOptions): Promise<Re
     }
     return jsonResponse(response)
   } catch {
+    return jsonResponse({ error: 'Internal server error' }, { status: 500 })
+  }
+}
+
+async function handleRename(req: Request, options: ApiRoutesOptions): Promise<Response> {
+  if (options.readonly) {
+    return jsonResponse({ error: 'Server is in read-only mode' }, { status: 403 })
+  }
+
+  let body: { path?: string; newName?: string }
+  try {
+    body = await req.json()
+  } catch {
+    return jsonResponse({ error: 'Invalid JSON body' }, { status: 400 })
+  }
+
+  const { path: requestPath, newName } = body
+  if (!requestPath || !newName) {
+    return jsonResponse({ error: 'path and newName are required' }, { status: 400 })
+  }
+
+  if (newName.includes('/') || newName.includes('\\') || newName === '..' || newName.includes('\0')) {
+    return jsonResponse({ error: 'Invalid file name' }, { status: 400 })
+  }
+
+  const safePath = resolveSafePath(options.root, requestPath)
+  if (!safePath) {
+    return jsonResponse({ error: 'Access denied: Invalid path' }, { status: 403 })
+  }
+
+  const parentDir = dirname(safePath.fullPath)
+  const targetPath = join(parentDir, newName)
+
+  // Ensure target stays within root
+  const targetRelative = relative(options.root, targetPath)
+  if (targetRelative.startsWith('..') || targetRelative.startsWith('/')) {
+    return jsonResponse({ error: 'Access denied: Invalid target path' }, { status: 403 })
+  }
+
+  try {
+    await fs.access(targetPath)
+    return jsonResponse({ error: 'A file or folder with that name already exists' }, { status: 409 })
+  } catch {
+    // Target doesn't exist — good
+  }
+
+  try {
+    await fs.rename(safePath.fullPath, targetPath)
+    const newRelativePath = '/' + targetRelative.replace(/\\/g, '/')
+    return jsonResponse({ ok: true, newPath: newRelativePath })
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code
+    if (code === 'ENOENT') {
+      return jsonResponse({ error: 'File not found' }, { status: 404 })
+    }
+    if (code === 'EACCES') {
+      return jsonResponse({ error: 'Permission denied' }, { status: 403 })
+    }
+    return jsonResponse({ error: 'Internal server error' }, { status: 500 })
+  }
+}
+
+async function handleDelete(req: Request, options: ApiRoutesOptions): Promise<Response> {
+  if (options.readonly) {
+    return jsonResponse({ error: 'Server is in read-only mode' }, { status: 403 })
+  }
+
+  let body: { path?: string }
+  try {
+    body = await req.json()
+  } catch {
+    return jsonResponse({ error: 'Invalid JSON body' }, { status: 400 })
+  }
+
+  const { path: requestPath } = body
+  if (!requestPath) {
+    return jsonResponse({ error: 'path is required' }, { status: 400 })
+  }
+
+  const safePath = resolveSafePath(options.root, requestPath)
+  if (!safePath) {
+    return jsonResponse({ error: 'Access denied: Invalid path' }, { status: 403 })
+  }
+
+  if (safePath.fullPath === options.root) {
+    return jsonResponse({ error: 'Cannot delete root directory' }, { status: 403 })
+  }
+
+  try {
+    await fs.rm(safePath.fullPath, { recursive: true })
+    return jsonResponse({ ok: true })
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code
+    if (code === 'ENOENT') {
+      return jsonResponse({ error: 'File not found' }, { status: 404 })
+    }
+    if (code === 'EACCES') {
+      return jsonResponse({ error: 'Permission denied' }, { status: 403 })
+    }
+    return jsonResponse({ error: 'Internal server error' }, { status: 500 })
+  }
+}
+
+async function handleMove(req: Request, options: ApiRoutesOptions): Promise<Response> {
+  if (options.readonly) {
+    return jsonResponse({ error: 'Server is in read-only mode' }, { status: 403 })
+  }
+
+  let body: { path?: string; destination?: string }
+  try {
+    body = await req.json()
+  } catch {
+    return jsonResponse({ error: 'Invalid JSON body' }, { status: 400 })
+  }
+
+  const { path: requestPath, destination } = body
+  if (!requestPath || !destination) {
+    return jsonResponse({ error: 'path and destination are required' }, { status: 400 })
+  }
+
+  const safePath = resolveSafePath(options.root, requestPath)
+  if (!safePath) {
+    return jsonResponse({ error: 'Access denied: Invalid path' }, { status: 403 })
+  }
+
+  if (safePath.fullPath === options.root) {
+    return jsonResponse({ error: 'Cannot move root directory' }, { status: 403 })
+  }
+
+  const safeDest = resolveSafePath(options.root, destination)
+  if (!safeDest) {
+    return jsonResponse({ error: 'Access denied: Invalid destination path' }, { status: 403 })
+  }
+
+  // Destination must be a directory
+  try {
+    const destStat = await fs.stat(safeDest.fullPath)
+    if (!destStat.isDirectory()) {
+      return jsonResponse({ error: 'Destination is not a directory' }, { status: 400 })
+    }
+  } catch {
+    return jsonResponse({ error: 'Destination directory not found' }, { status: 404 })
+  }
+
+  // Prevent moving into itself or a subdirectory of itself
+  const sourceName = basename(safePath.fullPath)
+  const targetPath = join(safeDest.fullPath, sourceName)
+  if (targetPath === safePath.fullPath || safeDest.fullPath.startsWith(safePath.fullPath + '/')) {
+    return jsonResponse({ error: 'Cannot move a folder into itself' }, { status: 400 })
+  }
+
+  // Check target doesn't already exist
+  try {
+    await fs.access(targetPath)
+    return jsonResponse({ error: 'A file or folder with that name already exists in the destination' }, { status: 409 })
+  } catch {
+    // Target doesn't exist — good
+  }
+
+  try {
+    await fs.rename(safePath.fullPath, targetPath)
+    const newRelative = relative(options.root, targetPath)
+    const newPath = '/' + newRelative.replace(/\\/g, '/')
+    return jsonResponse({ ok: true, newPath })
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code
+    if (code === 'ENOENT') {
+      return jsonResponse({ error: 'File not found' }, { status: 404 })
+    }
+    if (code === 'EACCES') {
+      return jsonResponse({ error: 'Permission denied' }, { status: 403 })
+    }
     return jsonResponse({ error: 'Internal server error' }, { status: 500 })
   }
 }

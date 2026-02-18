@@ -979,11 +979,18 @@ body {
 .info-footer {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: space-between;
   gap: 8px;
   padding: 8px 12px;
   border-top: 1px solid rgba(255, 255, 255, 0.1);
   flex-shrink: 0;
+}
+
+.info-actions-left,
+.info-actions-right {
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .info-footer[hidden] {
@@ -1020,6 +1027,110 @@ body {
 .info-favorite-btn svg {
   width: 20px;
   height: 20px;
+}
+
+.info-action-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s;
+}
+
+.info-action-btn svg {
+  width: 20px;
+  height: 20px;
+}
+
+.info-action-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.info-action-btn.danger:hover {
+  color: var(--danger);
+}
+
+.info-action-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.info-action-btn:disabled:hover {
+  background: transparent;
+  color: var(--text-secondary);
+}
+
+/* Confirm Dialog */
+.confirm-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1001;
+  padding: 16px;
+}
+
+.confirm-overlay[hidden] {
+  display: none;
+}
+
+.confirm-modal {
+  background: var(--bg-secondary);
+  border-radius: 12px;
+  width: 100%;
+  max-width: 320px;
+  overflow: hidden;
+}
+
+.confirm-message {
+  padding: 20px 20px 16px;
+  font-size: 15px;
+  line-height: 1.4;
+  color: var(--text-primary);
+}
+
+.confirm-actions {
+  display: flex;
+  gap: 8px;
+  padding: 0 16px 16px;
+  justify-content: flex-end;
+}
+
+.confirm-btn {
+  padding: 8px 20px;
+  border: none;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s, opacity 0.15s;
+}
+
+.confirm-cancel {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.confirm-cancel:hover {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.confirm-danger {
+  background: var(--danger);
+  color: #fff;
+}
+
+.confirm-danger:hover {
+  opacity: 0.85;
 }
 
 /* Search Overlay */
