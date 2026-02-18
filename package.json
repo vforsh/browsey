@@ -1,9 +1,16 @@
 {
   "name": "browsey",
-  "private": true,
+  "version": "0.1.0",
+  "description": "Mobile-friendly web file browser. Serve any directory and browse it from your phone.",
+  "keywords": ["file-browser", "file-server", "mobile", "bun", "cli"],
   "workspaces": ["packages/*"],
+  "bin": {
+    "browsey": "dist/browsey"
+  },
+  "files": ["dist/browsey"],
   "scripts": {
     "build": "bun run scripts/build.ts",
+    "prepublishOnly": "bun run build",
     "dev:api": "bun --watch packages/cli/src/bin.ts api",
     "dev:app": "bun --watch packages/cli/src/bin.ts app --api http://localhost:4200",
     "typecheck": "tsc --build"

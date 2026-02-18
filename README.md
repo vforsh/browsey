@@ -23,50 +23,53 @@ Start a local web server to browse files from any device on your network - perfe
 
 Browsey is installable as a PWA when served over HTTPS (or localhost). If you want Add to Home Screen on a remote device, put Browsey behind a TLS-terminating reverse proxy.
 
-## Installation
+## Quick Start
+
+Run directly with `bunx` — no installation needed:
 
 ```bash
-bun install -g @vforsh/browsey
+bunx browsey start .
 ```
 
-Or run directly:
+Or install globally:
 
 ```bash
-bunx @vforsh/browsey
+bun install -g browsey
+browsey start .
 ```
 
 ## Usage
 
 ```bash
 # Serve current directory
-browsey
+browsey start
 
 # Serve a specific directory
-browsey ./photos
+browsey start ./photos
 
-# Custom port
-browsey -p 3000
+# Custom ports
+browsey start -p 3000 --app-port 3001
 
 # Open browser automatically
-browsey --open
-
-# Hide QR code for mobile access
-browsey --no-qr
+browsey start --open
 
 # Allow file modifications (default is read-only)
-browsey --no-readonly
+browsey start --no-readonly
 
 # Ignore patterns
-browsey -i "node_modules,.git,*.log"
+browsey start -i "node_modules,.git,*.log"
 
 # Show hidden files
-browsey --hidden
-
-# Disable HTTPS (HTTPS is default)
-browsey --no-https
+browsey start --hidden
 
 # All options
-browsey ./my-folder -p 4200 -h 0.0.0.0 -i "node_modules,.git" --hidden --open --no-readonly --no-qr
+browsey start ./my-folder -p 4200 --app-port 4201 -i "node_modules,.git" --hidden --open --no-readonly --no-qr
+```
+
+All commands work with `bunx browsey` too:
+
+```bash
+bunx browsey start ./photos --open
 ```
 
 ## Options
