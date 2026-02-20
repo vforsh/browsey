@@ -398,6 +398,53 @@ body {
   }
 }
 
+/* Paste FAB */
+.paste-fab {
+  position: fixed;
+  bottom: calc(20px + var(--safe-bottom));
+  right: 20px;
+  z-index: 999;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 20px;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 28px;
+  font-size: 14px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  box-shadow: 0 4px 16px rgba(77, 159, 255, 0.35);
+  transition: transform 0.2s ease, opacity 0.2s ease, background 0.15s;
+  transform: translateY(80px);
+  opacity: 0;
+}
+
+.paste-fab.visible {
+  transform: translateY(0);
+  opacity: 1;
+}
+
+.paste-fab:hover {
+  background: var(--accent-hover);
+}
+
+.paste-fab:active {
+  transform: scale(0.96);
+}
+
+.paste-fab svg {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+}
+
+.paste-fab-label {
+  white-space: nowrap;
+}
+
 /* Responsive adjustments - tablet (single pane, centered) */
 @media (min-width: 768px) and (max-width: 1023px) {
   .file-list {
@@ -2062,42 +2109,104 @@ body {
   margin: 0;
 }
 
-.connect-saved-container {
+.connect-history {
   width: 100%;
   margin-top: 4px;
 }
 
-.connect-saved-container[hidden] {
+.connect-history[hidden] {
   display: none;
 }
 
-.connect-saved {
+.connect-history-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+  padding: 0 2px;
+}
+
+.connect-history-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.connect-history-item {
   display: flex;
   align-items: center;
   gap: 10px;
   width: 100%;
-  padding: 12px 16px;
+  padding: 10px 14px;
   background: var(--bg-secondary);
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 10px;
-  color: var(--accent);
-  font-size: 14px;
-  font-family: inherit;
   cursor: pointer;
-  transition: background 0.15s, border-color 0.15s;
+  transition: background 0.15s, border-color 0.15s, opacity 0.3s;
   text-align: left;
-  overflow: hidden;
+  font-family: inherit;
+  color: var(--text-primary);
 }
 
-.connect-saved:hover {
+.connect-history-item:hover {
   background: var(--bg-hover);
-  border-color: var(--accent);
+  border-color: rgba(255, 255, 255, 0.2);
 }
 
-.connect-saved span {
+.connect-history-item.inactive {
+  opacity: 0.45;
+}
+
+.connect-history-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: rgba(255, 255, 255, 0.2);
+  transition: background 0.3s;
+}
+
+.connect-history-dot.live {
+  background: #4ade80;
+}
+
+.connect-history-url {
+  flex: 1;
+  font-size: 13px;
+  font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Fira Code', monospace;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  min-width: 0;
+}
+
+.connect-history-badge {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 2px 6px;
+  border-radius: 4px;
+  opacity: 0;
+  transition: opacity 0.3s;
+}
+
+.connect-history-badge.readonly {
+  opacity: 1;
+  color: var(--text-secondary);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.connect-history-badge.readwrite {
+  opacity: 1;
+  color: #fbbf24;
+  background: rgba(251, 191, 36, 0.12);
 }
 
 .connect-form {
@@ -2396,6 +2505,53 @@ body {
 
 .settings-toggle.active .settings-toggle-knob {
   transform: translateX(20px);
+}
+
+/* Paste FAB */
+.paste-fab {
+  position: fixed;
+  bottom: calc(20px + var(--safe-bottom));
+  right: 20px;
+  z-index: 999;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 20px;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 28px;
+  font-size: 14px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  box-shadow: 0 4px 16px rgba(77, 159, 255, 0.35);
+  transition: transform 0.2s ease, opacity 0.2s ease, background 0.15s;
+  transform: translateY(80px);
+  opacity: 0;
+}
+
+.paste-fab.visible {
+  transform: translateY(0);
+  opacity: 1;
+}
+
+.paste-fab:hover {
+  background: var(--accent-hover);
+}
+
+.paste-fab:active {
+  transform: scale(0.96);
+}
+
+.paste-fab svg {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+}
+
+.paste-fab-label {
+  white-space: nowrap;
 }
 
 /* Compact mode */

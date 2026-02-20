@@ -1,5 +1,7 @@
 import {
   Archive,
+  ClipboardCopy,
+  ClipboardPaste,
   File,
   FileCode,
   FileCog,
@@ -11,6 +13,7 @@ import {
   Info,
   Music,
   Pencil,
+  Scissors,
   Star,
   Trash2,
   Video,
@@ -1089,11 +1092,15 @@ class InfoModal {
   private onDelete: (path: string, type: 'file' | 'directory') => void
   private onRename: (path: string, currentName: string) => void
   private onMove: (path: string) => void
+  private onCopy: (path: string, name: string, type: 'file' | 'directory') => void
+  private onCut: (path: string, name: string, type: 'file' | 'directory') => void
 
   constructor(callbacks: {
     onDelete: (path: string, type: 'file' | 'directory') => void
     onRename: (path: string, currentName: string) => void
     onMove: (path: string) => void
+    onCopy: (path: string, name: string, type: 'file' | 'directory') => void
+    onCut: (path: string, name: string, type: 'file' | 'directory') => void
   }) {
     this.overlay = document.getElementById('info-overlay')!
     this.content = document.getElementById('info-content')!
@@ -1103,6 +1110,8 @@ class InfoModal {
     this.onDelete = callbacks.onDelete
     this.onRename = callbacks.onRename
     this.onMove = callbacks.onMove
+    this.onCopy = callbacks.onCopy
+    this.onCut = callbacks.onCut
 
     this.setupEventListeners()
   }
@@ -1141,6 +1150,18 @@ class InfoModal {
       const moveBtn = target.closest('.info-move-btn') as HTMLElement | null
       if (moveBtn && !moveBtn.hasAttribute('disabled')) {
         this.onMove(this.currentPath)
+        return
+      }
+
+      const copyBtn = target.closest('.info-copy-btn') as HTMLElement | null
+      if (copyBtn) {
+        this.onCopy(this.currentPath, this.currentName, this.currentType)
+        return
+      }
+
+      const cutBtn = target.closest('.info-cut-btn') as HTMLElement | null
+      if (cutBtn && !cutBtn.hasAttribute('disabled')) {
+        this.onCut(this.currentPath, this.currentName, this.currentType)
         return
       }
 
@@ -1224,6 +1245,8 @@ class InfoModal {
       leftHtml = `
         <button class="info-action-btn info-rename-btn" aria-label="Rename"${disabled}>${Pencil}</button>
         <button class="info-action-btn info-move-btn" aria-label="Move"${disabled}>${FolderInput}</button>
+        <button class="info-action-btn info-copy-btn" aria-label="Copy">${ClipboardCopy}</button>
+        <button class="info-action-btn info-cut-btn" aria-label="Cut"${disabled}>${Scissors}</button>
         <button class="info-action-btn info-delete-btn danger" aria-label="Delete"${disabled}>${Trash2}</button>`
     }
 
@@ -1278,7 +1301,6 @@ class SettingsModal {
   private overlay: HTMLElement
   private content: HTMLElement
   private closeBtn: HTMLElement
-  private dynamicMode: boolean
   private onServerChange: () => void
   private onCompactModeChange: (compact: boolean) => void
   private onShowHiddenChange: (show: boolean) => void
@@ -1287,12 +1309,10 @@ class SettingsModal {
   private static readonly SHOW_HIDDEN_KEY = 'browsey-show-hidden'
 
   constructor(
-    dynamicMode: boolean,
     onServerChange: () => void,
     onCompactModeChange: (compact: boolean) => void,
     onShowHiddenChange: (show: boolean) => void
   ) {
-    this.dynamicMode = dynamicMode
     this.onServerChange = onServerChange
     this.onCompactModeChange = onCompactModeChange
     this.onShowHiddenChange = onShowHiddenChange
@@ -1352,9 +1372,7 @@ class SettingsModal {
 
   private render(): void {
     const serverUrl = window.__BROWSEY_API_BASE__ || '—'
-    const changeBtn = this.dynamicMode
-      ? `<button class="settings-server-change" id="settings-change-server">Change</button>`
-      : ''
+    const changeBtn = `<button class="settings-server-change" id="settings-change-server">Change</button>`
     const isCompact = SettingsModal.isCompactMode()
     const isShowHidden = SettingsModal.isShowHidden()
 
@@ -1380,12 +1398,10 @@ class SettingsModal {
       </div>
     `
 
-    if (this.dynamicMode) {
-      document.getElementById('settings-change-server')?.addEventListener('click', () => {
-        this.close()
-        this.onServerChange()
-      })
-    }
+    document.getElementById('settings-change-server')?.addEventListener('click', () => {
+      this.close()
+      this.onServerChange()
+    })
 
     document.getElementById('settings-compact-toggle')?.addEventListener('click', (e) => {
       const btn = e.currentTarget as HTMLButtonElement
@@ -2435,13 +2451,14 @@ class ConnectScreen {
   private connectBtn: HTMLButtonElement
   private scanBtn: HTMLElement
   private errorEl: HTMLElement
-  private savedContainer: HTMLElement
-  private savedBtn: HTMLElement
-  private savedUrlEl: HTMLElement
+  private historyEl: HTMLElement
+  private historyList: HTMLElement
   private scanner: QRScanner | null = null
   private onConnect: (url: string) => void
 
-  private static readonly STORAGE_KEY = 'browsey-api-url'
+  private static readonly HISTORY_KEY = 'browsey-api-history'
+  private static readonly HISTORY_MAX = 5
+  private static readonly LEGACY_KEY = 'browsey-api-url'
 
   constructor(onConnect: (url: string) => void) {
     this.onConnect = onConnect
@@ -2451,9 +2468,8 @@ class ConnectScreen {
     this.connectBtn = document.getElementById('connect-btn') as HTMLButtonElement
     this.scanBtn = document.getElementById('connect-scan-btn')!
     this.errorEl = document.getElementById('connect-error')!
-    this.savedContainer = document.getElementById('connect-saved-container')!
-    this.savedBtn = document.getElementById('connect-saved-btn')!
-    this.savedUrlEl = document.getElementById('connect-saved-url')!
+    this.historyEl = document.getElementById('connect-history')!
+    this.historyList = document.getElementById('connect-history-list')!
 
     this.setupEventListeners()
   }
@@ -2464,18 +2480,13 @@ class ConnectScreen {
       this.connect(this.input.value)
     })
 
-    this.savedBtn.addEventListener('click', () => {
-      const saved = ConnectScreen.getSavedUrl()
-      if (saved) this.connect(saved)
-    })
-
     if (QRScanner.isSupported()) {
       this.scanBtn.hidden = false
       this.scanBtn.addEventListener('click', () => this.openScanner())
     }
   }
 
-  show(error?: string): void {
+  show(error?: string, prefill?: string): void {
     // Hide main UI elements
     document.querySelector('.header')?.setAttribute('hidden', '')
     document.getElementById('git-status-bar')?.setAttribute('hidden', '')
@@ -2487,15 +2498,11 @@ class ConnectScreen {
       this.errorEl.textContent = error
     }
 
-    // Show saved URL as quick-connect option
-    const saved = ConnectScreen.getSavedUrl()
-    if (saved) {
-      this.savedContainer.hidden = false
-      this.savedUrlEl.textContent = saved
-    } else {
-      this.savedContainer.hidden = true
+    if (prefill) {
+      this.input.value = prefill
     }
 
+    this.renderHistory()
     this.input.focus()
   }
 
@@ -2505,6 +2512,52 @@ class ConnectScreen {
     // Restore main UI elements
     document.querySelector('.header')?.removeAttribute('hidden')
     document.getElementById('file-list')?.removeAttribute('hidden')
+  }
+
+  private renderHistory(): void {
+    const history = ConnectScreen.getHistory()
+
+    if (history.length === 0) {
+      this.historyEl.hidden = true
+      return
+    }
+
+    this.historyEl.hidden = false
+    this.historyList.innerHTML = ''
+
+    for (const url of history) {
+      const li = document.createElement('li')
+      li.className = 'connect-history-item inactive'
+
+      const dot = document.createElement('span')
+      dot.className = 'connect-history-dot'
+
+      const urlSpan = document.createElement('span')
+      urlSpan.className = 'connect-history-url'
+      urlSpan.textContent = url
+
+      const badge = document.createElement('span')
+      badge.className = 'connect-history-badge'
+
+      li.append(dot, urlSpan, badge)
+      li.addEventListener('click', () => this.connect(url))
+      this.historyList.appendChild(li)
+
+      // Fire liveness probe
+      fetch(`${url}/api/health`, { signal: AbortSignal.timeout(5000) })
+        .then(async (r) => {
+          if (r.ok) {
+            dot.classList.add('live')
+            li.classList.remove('inactive')
+            const data = await r.json()
+            badge.textContent = data.readonly ? 'read-only' : 'read-write'
+            badge.classList.add(data.readonly ? 'readonly' : 'readwrite')
+          }
+        })
+        .catch(() => {
+          // stays inactive
+        })
+    }
   }
 
   private async connect(rawUrl: string): Promise<void> {
@@ -2531,7 +2584,7 @@ class ConnectScreen {
     }
 
     this.setLoading(false)
-    ConnectScreen.saveUrl(url)
+    ConnectScreen.addToHistory(url)
     window.__BROWSEY_API_BASE__ = url
     this.hide()
     this.onConnect(url)
@@ -2579,16 +2632,38 @@ class ConnectScreen {
     this.errorEl.hidden = true
   }
 
+  static getHistory(): string[] {
+    // Migrate from old single-URL key
+    const legacy = localStorage.getItem(ConnectScreen.LEGACY_KEY)
+    if (legacy) {
+      localStorage.removeItem(ConnectScreen.LEGACY_KEY)
+      const history = [legacy]
+      localStorage.setItem(ConnectScreen.HISTORY_KEY, JSON.stringify(history))
+      return history
+    }
+    try {
+      const raw = localStorage.getItem(ConnectScreen.HISTORY_KEY)
+      return raw ? JSON.parse(raw) : []
+    } catch {
+      return []
+    }
+  }
+
+  static addToHistory(url: string): void {
+    const history = ConnectScreen.getHistory().filter((u) => u !== url)
+    history.unshift(url)
+    localStorage.setItem(
+      ConnectScreen.HISTORY_KEY,
+      JSON.stringify(history.slice(0, ConnectScreen.HISTORY_MAX))
+    )
+  }
+
   static getSavedUrl(): string | null {
-    return localStorage.getItem(ConnectScreen.STORAGE_KEY)
+    return ConnectScreen.getHistory()[0] ?? null
   }
 
-  static saveUrl(url: string): void {
-    localStorage.setItem(ConnectScreen.STORAGE_KEY, url)
-  }
-
-  static clearUrl(): void {
-    localStorage.removeItem(ConnectScreen.STORAGE_KEY)
+  static clearHistory(): void {
+    localStorage.removeItem(ConnectScreen.HISTORY_KEY)
   }
 }
 
@@ -2614,14 +2689,14 @@ class FileBrowser {
   private gitStatusBar: GitStatusBar
   private settingsModal: SettingsModal
   private highlightedFile: string | null = null
-  private dynamicMode: boolean
   private selectedFilePath: string | null = null
   private previewPane: HTMLElement
   private previewHeader: HTMLElement
   private confirmDialog: ConfirmDialog
+  private clipboard: { path: string; name: string; type: 'file' | 'directory'; mode: 'copy' | 'cut' } | null = null
+  private pasteFab: HTMLElement | null = null
 
-  constructor(dynamicMode = false) {
-    this.dynamicMode = dynamicMode
+  constructor() {
     this.fileList = document.getElementById('file-list')!
     this.pathDisplay = document.getElementById('path-display')!
     this.loading = document.getElementById('loading')!
@@ -2639,6 +2714,8 @@ class FileBrowser {
       onDelete: (path, type) => this.handleFileDelete(path, type),
       onRename: (path, name) => this.handleFileRename(path, name),
       onMove: (path) => this.handleFileMove(path),
+      onCopy: (path, name, type) => this.handleFileCopy(path, name, type),
+      onCut: (path, name, type) => this.handleFileCut(path, name, type),
     })
     this.searchOverlay = new SearchOverlay(
       (path, highlightFile) => this.handleSearchNavigation(path, highlightFile)
@@ -2650,7 +2727,6 @@ class FileBrowser {
       (path) => this.gitChangesOverlay.open(path)
     )
     this.settingsModal = new SettingsModal(
-      this.dynamicMode,
       () => this.handleServerChange(),
       (compact) => this.applyCompactMode(compact),
       () => this.navigate(this.currentPath, { updateHistory: false })
@@ -2870,7 +2946,6 @@ class FileBrowser {
   }
 
   private handleServerChange(): void {
-    ConnectScreen.clearUrl()
     window.__BROWSEY_API_BASE__ = ''
 
     const connectScreen = new ConnectScreen(() => {
@@ -2949,6 +3024,67 @@ class FileBrowser {
       this.navigate(this.currentPath, { updateHistory: false })
     } catch (error) {
       this.showError(error instanceof Error ? error.message : 'Failed to rename')
+    }
+  }
+
+  private handleFileCopy(path: string, name: string, type: 'file' | 'directory'): void {
+    this.clipboard = { path, name, type, mode: 'copy' }
+    this.showPasteFab()
+    this.showToast(`Copied "${name}"`)
+  }
+
+  private handleFileCut(path: string, name: string, type: 'file' | 'directory'): void {
+    this.clipboard = { path, name, type, mode: 'cut' }
+    this.showPasteFab()
+    this.showToast(`Cut "${name}"`)
+  }
+
+  private showPasteFab(): void {
+    if (this.pasteFab) {
+      this.pasteFab.remove()
+      this.pasteFab = null
+    }
+    const fab = document.createElement('button')
+    fab.className = 'paste-fab'
+    fab.setAttribute('aria-label', 'Paste')
+    fab.innerHTML = `${ClipboardPaste}<span class="paste-fab-label">Paste</span>`
+    fab.addEventListener('click', () => this.handlePaste())
+    document.body.appendChild(fab)
+    this.pasteFab = fab
+    requestAnimationFrame(() => fab.classList.add('visible'))
+  }
+
+  private hidePasteFab(): void {
+    if (!this.pasteFab) return
+    this.pasteFab.classList.remove('visible')
+    const fab = this.pasteFab
+    this.pasteFab = null
+    setTimeout(() => fab.remove(), 200)
+  }
+
+  private async handlePaste(): Promise<void> {
+    if (!this.clipboard) return
+
+    const endpoint = this.clipboard.mode === 'cut' ? '/api/move' : '/api/copy'
+    try {
+      const res = await fetch(apiUrl(endpoint), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          path: this.clipboard.path,
+          destination: this.currentPath,
+        }),
+      })
+      if (!res.ok) {
+        const data = await res.json()
+        throw new Error(data.error || 'Failed to paste')
+      }
+      this.showToast(this.clipboard.mode === 'cut' ? 'Moved' : 'Pasted')
+      this.clipboard = null
+      this.hidePasteFab()
+      this.navigate(this.currentPath, { updateHistory: false })
+    } catch (error) {
+      this.showError(error instanceof Error ? error.message : 'Failed to paste')
     }
   }
 
@@ -3564,20 +3700,35 @@ class FileBrowser {
 }
 
 // Initialize
-const serverApiUrl = window.__BROWSEY_API_BASE__
-if (serverApiUrl) {
-  // API URL baked in by server (--api was provided)
-  new FileBrowser()
+const apiParam = new URL(location.href).searchParams.get('api')
+
+if (apiParam) {
+  // API URL provided via ?api= parameter (e.g. from browsey start QR code)
+  const normalizedParam = apiParam.replace(/\/+$/, '')
+  fetch(`${normalizedParam}/api/health`, { signal: AbortSignal.timeout(5000) })
+    .then((r) => {
+      if (r.ok) {
+        window.__BROWSEY_API_BASE__ = normalizedParam
+        ConnectScreen.addToHistory(normalizedParam)
+        hideLoading()
+        new FileBrowser()
+      } else {
+        showConnectScreen('Provided API server is not responding', normalizedParam)
+      }
+    })
+    .catch(() => {
+      showConnectScreen('Could not reach provided API server', normalizedParam)
+    })
 } else {
-  // No API URL — check localStorage or show connect screen
+  // No URL param — check history or show connect screen
   const saved = ConnectScreen.getSavedUrl()
   if (saved) {
-    // Try saved URL, fall back to connect screen if it fails
     fetch(`${saved}/api/health`, { signal: AbortSignal.timeout(5000) })
-      .then((response) => {
-        if (response.ok) {
+      .then((r) => {
+        if (r.ok) {
           window.__BROWSEY_API_BASE__ = saved
-          new FileBrowser(true)
+          hideLoading()
+          new FileBrowser()
         } else {
           showConnectScreen('Saved server is not responding')
         }
@@ -3590,13 +3741,15 @@ if (serverApiUrl) {
   }
 }
 
-function showConnectScreen(error?: string): void {
-  // Hide loading indicator
+function hideLoading(): void {
   const loading = document.getElementById('loading')
   if (loading) loading.style.display = 'none'
+}
 
-  const connectScreen = new ConnectScreen((url) => {
-    new FileBrowser(true)
+function showConnectScreen(error?: string, prefill?: string): void {
+  hideLoading()
+  const connectScreen = new ConnectScreen(() => {
+    new FileBrowser()
   })
-  connectScreen.show(error)
+  connectScreen.show(error, prefill)
 }

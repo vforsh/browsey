@@ -18,13 +18,13 @@ export type ApiServerOptions = {
 export type AppServerOptions = {
   port: number
   host: string
-  apiUrl?: string
   showQR: boolean
   version: string
   https: boolean
   httpsCert?: string
   httpsKey?: string
   open: boolean
+  openUrl?: string
   quiet?: boolean
   watch?: boolean
 }
@@ -57,7 +57,6 @@ export interface InstanceInfo {
   host: string
   kind: 'api' | 'app'
   rootPath: string      // For api: directory being served. For app: not used
-  apiUrl?: string       // For app: the --api URL
   startedAt: string
   readonly: boolean
   version: string

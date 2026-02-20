@@ -302,14 +302,9 @@
       </div>
       <h1 class="connect-title">Browsey</h1>
       <p class="connect-subtitle">Connect to API Server</p>
-      <div class="connect-saved-container" id="connect-saved-container" hidden>
-        <button class="connect-saved" id="connect-saved-btn">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="12" cy="12" r="10"/>
-            <polyline points="12 6 12 12 16 14"/>
-          </svg>
-          <span id="connect-saved-url"></span>
-        </button>
+      <div class="connect-history" id="connect-history" hidden>
+        <div class="connect-history-label">Recent servers</div>
+        <ul class="connect-history-list" id="connect-history-list"></ul>
       </div>
       <form class="connect-form" id="connect-form">
         <input type="url"

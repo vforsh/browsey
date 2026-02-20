@@ -107,6 +107,9 @@ export async function handleApiRequest(
   if (route === '/move' && req.method === 'POST') {
     return handleMove(req, options)
   }
+  if (route === '/copy' && req.method === 'POST') {
+    return handleCopy(req, options)
+  }
 
   return jsonResponse({ error: 'Not found' }, { status: 404 })
 }
@@ -695,6 +698,103 @@ async function handleMove(req: Request, options: ApiRoutesOptions): Promise<Resp
     const newPath = '/' + newRelative.replace(/\\/g, '/')
     return jsonResponse({ ok: true, newPath })
   } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code
+    if (code === 'ENOENT') {
+      return jsonResponse({ error: 'File not found' }, { status: 404 })
+    }
+    if (code === 'EACCES') {
+      return jsonResponse({ error: 'Permission denied' }, { status: 403 })
+    }
+    return jsonResponse({ error: 'Internal server error' }, { status: 500 })
+  }
+}
+
+async function getUniquePath(destDir: string, sourceName: string): Promise<string> {
+  let targetPath = join(destDir, sourceName)
+  try {
+    await fs.access(targetPath)
+  } catch {
+    return targetPath
+  }
+
+  const ext = extname(sourceName)
+  const base = ext ? sourceName.slice(0, -ext.length) : sourceName
+
+  targetPath = join(destDir, `${base} (copy)${ext}`)
+  try {
+    await fs.access(targetPath)
+  } catch {
+    return targetPath
+  }
+
+  for (let i = 2; i <= 100; i++) {
+    targetPath = join(destDir, `${base} (copy ${i})${ext}`)
+    try {
+      await fs.access(targetPath)
+    } catch {
+      return targetPath
+    }
+  }
+
+  throw new Error('Too many copies exist')
+}
+
+async function handleCopy(req: Request, options: ApiRoutesOptions): Promise<Response> {
+  if (options.readonly) {
+    return jsonResponse({ error: 'Server is in read-only mode' }, { status: 403 })
+  }
+
+  let body: { path?: string; destination?: string }
+  try {
+    body = await req.json()
+  } catch {
+    return jsonResponse({ error: 'Invalid JSON body' }, { status: 400 })
+  }
+
+  const { path: requestPath, destination } = body
+  if (!requestPath || !destination) {
+    return jsonResponse({ error: 'path and destination are required' }, { status: 400 })
+  }
+
+  const safePath = resolveSafePath(options.root, requestPath)
+  if (!safePath) {
+    return jsonResponse({ error: 'Access denied: Invalid path' }, { status: 403 })
+  }
+
+  const safeDest = resolveSafePath(options.root, destination)
+  if (!safeDest) {
+    return jsonResponse({ error: 'Access denied: Invalid destination path' }, { status: 403 })
+  }
+
+  try {
+    const destStat = await fs.stat(safeDest.fullPath)
+    if (!destStat.isDirectory()) {
+      return jsonResponse({ error: 'Destination is not a directory' }, { status: 400 })
+    }
+  } catch {
+    return jsonResponse({ error: 'Destination directory not found' }, { status: 404 })
+  }
+
+  try {
+    const sourceStat = await fs.stat(safePath.fullPath)
+    if (sourceStat.isDirectory() && safeDest.fullPath.startsWith(safePath.fullPath + '/')) {
+      return jsonResponse({ error: 'Cannot copy a folder into itself' }, { status: 400 })
+    }
+  } catch {
+    return jsonResponse({ error: 'File not found' }, { status: 404 })
+  }
+
+  try {
+    const sourceName = basename(safePath.fullPath)
+    const targetPath = await getUniquePath(safeDest.fullPath, sourceName)
+    await fs.cp(safePath.fullPath, targetPath, { recursive: true })
+    const newRelative = relative(options.root, targetPath)
+    const newPath = '/' + newRelative.replace(/\\/g, '/')
+    return jsonResponse({ ok: true, newPath })
+  } catch (error) {
+    if (error instanceof Error && error.message === 'Too many copies exist') {
+      return jsonResponse({ error: 'Too many copies already exist' }, { status: 409 })
+    }
     const code = (error as NodeJS.ErrnoException).code
     if (code === 'ENOENT') {
       return jsonResponse({ error: 'File not found' }, { status: 404 })

@@ -200,18 +200,12 @@ export async function startAppServer(
     })
   }
 
-  // Helper to get current HTML with API base and live reload script injected
+  // Helper to get current HTML with live reload script injected
   async function getHtml(): Promise<string> {
     if (watchMode) {
       ui = await loadUIFromDisk()
     }
-    const apiBaseUrl = options.apiUrl ? options.apiUrl.replace(/\/$/, '') : ''
-    let html = apiBaseUrl
-      ? ui.html.replace(
-          'window.__BROWSEY_API_BASE__ = ""',
-          `window.__BROWSEY_API_BASE__ = ${JSON.stringify(apiBaseUrl)}`
-        )
-      : ui.html
+    let html = ui.html
 
     // Inject live reload script in watch mode
     if (watchMode) {
@@ -294,8 +288,6 @@ export async function startAppServer(
   const localUrl = getLocalUrl(listenHost, options.port, options.https)
   const networkUrl = getNetworkUrl(listenHost, options.port, options.https)
 
-  const apiBaseUrl = options.apiUrl ? options.apiUrl.replace(/\/$/, '') : ''
-
   if (!options.quiet) {
     console.log()
     console.log('  \x1b[1mBrowsey App\x1b[0m is running!')
@@ -327,7 +319,6 @@ export async function startAppServer(
     host: options.host,
     kind: 'app',
     rootPath: '',
-    apiUrl: apiBaseUrl || undefined,
     startedAt: new Date().toISOString(),
     readonly: true,
     version: options.version,
@@ -338,7 +329,7 @@ export async function startAppServer(
   })
 
   if (options.open) {
-    openBrowser(networkUrl ?? localUrl)
+    openBrowser(options.openUrl ?? networkUrl ?? localUrl)
   }
 
   const shutdown = () => {

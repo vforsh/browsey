@@ -168,7 +168,6 @@ const appCommand = new Command('app')
   .description('Start the UI server')
   .option('-p, --port <port>', 'Port to listen on', '4201')
   .option('-h, --host <host>', 'Host to bind to', '0.0.0.0')
-  .option('--api <url>', 'API server URL (optional, configure in browser if omitted)')
   .option('--open', 'Open browser automatically')
   .option('--https', 'Enable HTTPS')
   .option('--https-cert <path>', 'Path to TLS certificate (PEM)')
@@ -200,7 +199,6 @@ const appCommand = new Command('app')
       {
         port,
         host,
-        apiUrl: options.api as string | undefined,
         showQR: (options.qr as boolean) ?? true,
         version: VERSION,
         https: httpsEnabled,
@@ -248,7 +246,7 @@ appCommand
     console.log(`Restarting app server on port ${instance.port}...`)
 
     // Save instance config before stopping
-    const { port, host, apiUrl, https, httpsCert, httpsKey, showQR } = instance
+    const { port, host, https, httpsCert, httpsKey, showQR } = instance
 
     // Stop the instance
     stopInstance(instance.pid, false)
@@ -261,7 +259,6 @@ appCommand
       {
         port,
         host,
-        apiUrl,
         showQR: showQR ?? true,
         version: VERSION,
         https: https ?? false,
@@ -357,22 +354,26 @@ const startCommand = new Command('start')
       { register, deregister }
     )
 
-    // Construct API URL for the App server
+    // Construct URLs for QR code and --open
     const networkIp = getNetworkIp()
-    const apiUrl = `${protocol}://${networkIp ?? '127.0.0.1'}:${apiPort}`
+    const networkApiUrl = `${protocol}://${networkIp ?? '127.0.0.1'}:${apiPort}`
+    const networkAppUrl = networkIp ? `${protocol}://${networkIp}:${appPort}` : null
+    const appUrlWithApi = networkAppUrl
+      ? `${networkAppUrl}?api=${encodeURIComponent(networkApiUrl)}`
+      : `${protocol}://127.0.0.1:${appPort}?api=${encodeURIComponent(`${protocol}://127.0.0.1:${apiPort}`)}`
 
     // Start App server (quiet mode)
     const { shutdown: appShutdown } = await startAppServer(
       {
         port: appPort,
         host,
-        apiUrl,
         showQR: false,
         version: VERSION,
         https: httpsEnabled,
         httpsCert,
         httpsKey,
         open: (options.open as boolean) ?? false,
+        openUrl: appUrlWithApi,
         quiet: true,
       },
       { register, deregister }
@@ -381,7 +382,6 @@ const startCommand = new Command('start')
     // Print unified banner
     const localApiUrl = `${protocol}://127.0.0.1:${apiPort}`
     const localAppUrl = `${protocol}://127.0.0.1:${appPort}`
-    const networkAppUrl = networkIp ? `${protocol}://${networkIp}:${appPort}` : null
 
     console.log()
     console.log('  \x1b[1mBrowsey\x1b[0m is running!')
@@ -400,7 +400,7 @@ const startCommand = new Command('start')
     if (showQR && networkAppUrl) {
       console.log('  \x1b[2mScan to open:\x1b[0m')
       console.log()
-      qrcode.generate(networkAppUrl, { small: true })
+      qrcode.generate(appUrlWithApi, { small: true })
       console.log()
     }
 
@@ -451,8 +451,7 @@ program
       const kind = instance.kind.padEnd(6)
 
       if (instance.kind === 'app') {
-        const apiTarget = `→ ${instance.apiUrl || 'unknown'}`
-        console.log(`  ${pid} ${port} ${kind} ${apiTarget}`)
+        console.log(`  ${pid} ${port} ${kind} (browser-configured)`)
       } else {
         const dir = truncatePath(instance.rootPath, 33).padEnd(33)
         const mode = instance.readonly ? 'read-only' : 'read-write'
