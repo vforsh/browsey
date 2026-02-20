@@ -1,13 +1,23 @@
 {
   "name": "browsey",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Mobile-friendly web file browser. Serve any directory and browse it from your phone.",
-  "keywords": ["file-browser", "file-server", "mobile", "bun", "cli"],
-  "workspaces": ["packages/*"],
+  "keywords": [
+    "file-browser",
+    "file-server",
+    "mobile",
+    "bun",
+    "cli"
+  ],
+  "workspaces": [
+    "packages/*"
+  ],
   "bin": {
     "browsey": "dist/browsey"
   },
-  "files": ["dist/browsey"],
+  "files": [
+    "dist/browsey"
+  ],
   "scripts": {
     "build": "bun run scripts/build.ts",
     "prepublishOnly": "bun run build",
