@@ -83,7 +83,7 @@ browsey start -p 4200 --app-port 4201 --open
 
 # Start servers individually
 browsey api [path]                    # alias: service (default port 4200)
-browsey app --api <url>               # alias: ui (default port 4201)
+browsey app                           # alias: ui (default port 4201, API URL configured in browser)
 
 # Manage instances
 browsey list                          # alias: ls (--json for JSON output)
@@ -103,7 +103,7 @@ browsey app reload <target>           # alias: restart
 `-p/--port` (default 4200), `-h/--host` (default 0.0.0.0), `-i/--ignore`, `--no-readonly`, `--hidden`, `--no-qr`, `--https`, `--https-cert`, `--https-key`, `-w/--watch`, `--cors <origin>` (default `*`)
 
 ### `browsey app` options
-`-p/--port` (default 4201), `-h/--host` (default 0.0.0.0), `--api <url>` (optional, configure in browser if omitted), `--open`, `--https`, `--https-cert`, `--https-key`, `--no-qr`, `-w/--watch`
+`-p/--port` (default 4201), `-h/--host` (default 0.0.0.0), `--open`, `--https`, `--https-cert`, `--https-key`, `--no-qr`, `-w/--watch`
 
 ## API Endpoints
 
