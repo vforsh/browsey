@@ -174,6 +174,23 @@ After code changes, **rebuild** (`bun run build`) then **reload** the affected i
 - `packages/app/` changes → `browsey app reload :4201`
 - Both → reload both
 
+### API 4200 Restart Rule (launchd-managed)
+
+When API `:4200` is managed by LaunchAgent `com.browsey.api`, do **not** rely on `browsey api reload :4200` alone (port races/re-spawn can happen). Use this flow:
+
+```bash
+cd ~/dev/browsey
+bun run build
+launchctl kickstart -k gui/$(id -u)/com.browsey.api
+curl -sSf http://127.0.0.1:4200/api/health
+```
+
+Expected health output:
+
+```json
+{"ok":true,"readonly":false}
+```
+
 ## Guidelines for Changes
 
 1. **Type safety**: Maintain strict TypeScript - no `any` types
