@@ -34,6 +34,7 @@ const apiCommand = new Command('api')
   .option('--https', 'Enable HTTPS')
   .option('--https-cert <path>', 'Path to TLS certificate (PEM)')
   .option('--https-key <path>', 'Path to TLS private key (PEM)')
+  .option('--no-bonjour', 'Disable Bonjour/mDNS service advertisement')
   .option('-w, --watch', 'Enable live reload on file changes (dev mode)')
   .option('--cors <origin>', 'CORS allowed origin', '*')
   .action(async (pathArg: string, options: Record<string, unknown>) => {
@@ -62,6 +63,7 @@ const apiCommand = new Command('api')
         root: resolve(pathArg),
         port,
         host,
+        bonjour: (options.bonjour as boolean) ?? true,
         readonly: (options.readonly as boolean) ?? true,
         showHidden: (options.hidden as boolean) ?? false,
         showQR: (options.qr as boolean) ?? true,
@@ -115,6 +117,7 @@ apiCommand
     const {
       port,
       host,
+      bonjour,
       rootPath,
       readonly,
       https,
@@ -139,6 +142,7 @@ apiCommand
         root: rootPath,
         port,
         host,
+        bonjour: bonjour ?? true,
         readonly,
         showHidden: showHidden ?? false,
         showQR: showQR ?? true,
@@ -293,6 +297,7 @@ const startCommand = new Command('start')
   .option('--https', 'Enable HTTPS')
   .option('--https-cert <path>', 'Path to TLS certificate (PEM)')
   .option('--https-key <path>', 'Path to TLS private key (PEM)')
+  .option('--no-bonjour', 'Disable Bonjour/mDNS service advertisement')
   .option('-w, --watch', 'Enable live reload on file changes (dev mode)')
   .option('--cors <origin>', 'CORS allowed origin', '*')
   .option('--open', 'Open browser automatically')
@@ -339,6 +344,7 @@ const startCommand = new Command('start')
         root: rootPath,
         port: apiPort,
         host,
+        bonjour: (options.bonjour as boolean) ?? true,
         readonly: (options.readonly as boolean) ?? true,
         showHidden: (options.hidden as boolean) ?? false,
         showQR: false,

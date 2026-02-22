@@ -4,6 +4,7 @@ import { existsSync } from 'fs'
 import qrcode from 'qrcode-terminal'
 import { handleApiRequest } from './routes.js'
 import { createReloadSSEResponse, startWatcher, stopWatcher } from './live-reload.js'
+import { getBrowseyServiceType, startBonjourAdvertisement } from './bonjour.js'
 import { withCors, corsPreflightResponse } from '@vforsh/browsey-shared'
 import type { ApiServerOptions, InstanceInfo } from '@vforsh/browsey-shared'
 
@@ -96,6 +97,23 @@ export async function startApiServer(
 
   const localUrl = getLocalUrl(listenHost, options.port, options.https)
   const networkUrl = getNetworkUrl(listenHost, options.port, options.https)
+  let stopBonjour: (() => void) | null = null
+
+  if (options.bonjour) {
+    try {
+      stopBonjour = startBonjourAdvertisement({
+        host: options.host,
+        port: options.port,
+        rootPath,
+        version: options.version,
+        https: options.https,
+        readonly: options.readonly,
+      })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      console.warn(`Warning: Bonjour advertisement failed: ${message}`)
+    }
+  }
 
   if (!options.quiet) {
     console.log()
@@ -108,6 +126,7 @@ export async function startApiServer(
     console.log()
     console.log(`  \x1b[2mServing:\x1b[0m ${rootPath}`)
     console.log(`  \x1b[2mMode:\x1b[0m    ${options.readonly ? 'read-only' : 'read-write'}`)
+    console.log(`  \x1b[2mBonjour:\x1b[0m ${options.bonjour ? `enabled (_${getBrowseyServiceType()}._tcp)` : 'disabled'}`)
     console.log(`  \x1b[2mCORS:\x1b[0m    ${corsOrigin}`)
     console.log()
 
@@ -133,6 +152,7 @@ export async function startApiServer(
     rootPath,
     startedAt: new Date().toISOString(),
     readonly: options.readonly,
+    bonjour: options.bonjour,
     version: options.version,
     https: options.https,
     httpsCert: options.httpsCert,
@@ -149,6 +169,7 @@ export async function startApiServer(
     if (options.watch) {
       stopWatcher()
     }
+    stopBonjour?.()
     server.stop()
   }
 

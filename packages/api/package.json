@@ -7,6 +7,7 @@
   "types": "./src/index.ts",
   "dependencies": {
     "@vforsh/browsey-shared": "workspace:*",
+    "bonjour-service": "^1.3.0",
     "qrcode-terminal": "^0.12.0"
   }
 }

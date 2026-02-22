@@ -17,6 +17,7 @@ Start a local web server to browse files from any device on your network - perfe
 - **Copy path** - One-tap copy of absolute file paths
 - **Ignore patterns** - Filter out files/folders with glob patterns
 - **QR code** - Scan to open on mobile instantly
+- **Bonjour discovery** - API advertises itself on local network (`_browsey._tcp`)
 - **Zero config** - Just run `browsey` and go
 
 ## PWA Install
@@ -84,6 +85,7 @@ bunx browsey start ./photos --open
 | `--no-readonly` | Allow file modifications | `false` |
 | `--hidden` | Show hidden files | `false` |
 | `--no-qr` | Do not display QR code | `false` |
+| `--no-bonjour` | Disable Bonjour/mDNS API advertisement | `false` |
 | `--no-https` | Disable HTTPS | - |
 | `--https-cert <path>` | Path to TLS certificate (PEM) | `./certs/browsey.pem` |
 | `--https-key <path>` | Path to TLS private key (PEM) | `./certs/browsey-key.pem` |

@@ -2,6 +2,7 @@ export type ApiServerOptions = {
   root: string
   port: number
   host: string
+  bonjour: boolean
   readonly: boolean
   showHidden: boolean
   showQR: boolean
@@ -66,6 +67,7 @@ export interface InstanceInfo {
   httpsKey?: string
   showQR?: boolean
   // API-specific options
+  bonjour?: boolean
   showHidden?: boolean
   ignorePatterns?: string[]
   watch?: boolean
