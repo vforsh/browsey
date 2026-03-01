@@ -1,6 +1,6 @@
 {
   "name": "browsey",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Mobile-friendly web file browser. Serve any directory and browse it from your phone.",
   "keywords": [
     "file-browser",
