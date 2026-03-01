@@ -1,9 +1,10 @@
 import { promises as fs } from 'fs'
+import os from 'os'
 import { basename, dirname, extname, join, relative } from 'path'
 import { getMimeType, getFileExtension, resolveSafePath, createIgnoreMatcher } from '@vforsh/browsey-shared'
 import type { IgnoreMatcher } from '@vforsh/browsey-shared'
 import { getGitStatus, getGitLog, getGitChanges } from './git.js'
-import type { ApiRoutesOptions, FileItem, ListResponse, SearchResult, SearchResponse, GitStatusResponse, GitLogResponse, GitChangesResponse } from '@vforsh/browsey-shared'
+import type { ApiRoutesOptions, FileItem, ListResponse, SearchResult, SearchResponse, GitStatusResponse, GitLogResponse, GitChangesResponse, HealthResponse } from '@vforsh/browsey-shared'
 
 const JSON_HEADERS = {
   'Content-Type': 'application/json',
@@ -60,6 +61,25 @@ function jsonResponse(data: unknown, init?: ResponseInit): Response {
   })
 }
 
+function getHealthResponse(readonly: boolean): HealthResponse {
+  const runtime = typeof Bun !== 'undefined' ? 'bun' : 'node'
+  const runtimeVersion = runtime === 'bun' ? Bun.version : process.version
+
+  return {
+    ok: true,
+    readonly,
+    host: {
+      hostname: os.hostname(),
+      platform: process.platform,
+      arch: process.arch,
+      osRelease: os.release(),
+      runtime,
+      runtimeVersion,
+      uptimeSeconds: Math.floor(process.uptime()),
+    },
+  }
+}
+
 export async function handleApiRequest(
   req: Request,
   options: ApiRoutesOptions
@@ -72,7 +92,7 @@ export async function handleApiRequest(
   const route = url.pathname.slice('/api'.length)
 
   if (route === '/health') {
-    return jsonResponse({ ok: true, readonly: options.readonly })
+    return jsonResponse(getHealthResponse(options.readonly))
   }
   if (route === '/list') {
     return handleList(url, options)

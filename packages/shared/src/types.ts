@@ -93,6 +93,22 @@ export type SearchResponse = {
   results: SearchResult[]
 }
 
+export type HealthHostInfo = {
+  hostname: string
+  platform: string
+  arch: string
+  osRelease: string
+  runtime: 'bun' | 'node'
+  runtimeVersion: string
+  uptimeSeconds: number
+}
+
+export type HealthResponse = {
+  ok: boolean
+  readonly: boolean
+  host: HealthHostInfo
+}
+
 export type GitStatusResponse = {
   isRepo: boolean
   branch: string | null
