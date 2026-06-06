@@ -111,6 +111,10 @@ export type GitLogResult = {
   hasMore: boolean
 }
 
+type GetGitCommitOptions = {
+  includeAdjacent?: boolean
+}
+
 const COMMIT_HASH_RE = /^[0-9a-fA-F]{7,64}$/
 const LOG_FORMAT = '%H%n%h%n%an%n%aI%n%s'
 
@@ -273,7 +277,11 @@ export async function getGitLog(
   return { commits, hasMore }
 }
 
-export async function getGitCommit(path: string, hash: string): Promise<GitCommitDetails> {
+export async function getGitCommit(
+  path: string,
+  hash: string,
+  options: GetGitCommitOptions = {}
+): Promise<GitCommitDetails> {
   const repoRoot = await findGitRoot(path)
 
   if (!repoRoot) {
@@ -296,6 +304,7 @@ export async function getGitCommit(path: string, hash: string): Promise<GitCommi
   }
 
   const commit = parseCommitMetadata(metadata.stdout)
+  const includeAdjacent = options.includeAdjacent ?? true
   const [filesResult, statsResult, adjacentCommits] = await Promise.all([
     runGitCommandResult(repoRoot, [
       'show',
@@ -315,7 +324,9 @@ export async function getGitCommit(path: string, hash: string): Promise<GitCommi
       '-z',
       hash,
     ]),
-    getAdjacentCommits(repoRoot, commit.hash),
+    includeAdjacent
+      ? getAdjacentCommits(repoRoot, commit.hash)
+      : Promise.resolve({ previousCommit: null, nextCommit: null }),
   ])
 
   if (!filesResult.ok) {

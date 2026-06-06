@@ -118,7 +118,7 @@ browsey app reload <target>           # alias: restart
 | `GET /api/git?path=/` | Git repository status |
 | `GET /api/git/log?path=/` | Git commit history |
 | `GET /api/git/changes?path=/` | Git file changes |
-| `GET /api/git/commit?path=/&hash=<sha>` | Git commit details, stats, navigation, and changed files |
+| `GET /api/git/commit?path=/&hash=<sha>` | Git commit details, stats, navigation, and changed files (`includeAdjacent=0` skips navigation lookup) |
 | `POST /api/git/revert` | Discard changes for one git file |
 | `GET /api/reload` | SSE live reload (watch mode) |
 

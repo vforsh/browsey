@@ -100,7 +100,7 @@ Browsey exposes a simple REST API:
 | `GET /api/file?path=/file.txt` | Download a file |
 | `GET /api/stat?path=/file.txt` | Get file metadata |
 | `GET /api/git/changes?path=/` | Git file changes |
-| `GET /api/git/commit?path=/&hash=<sha>` | Git commit details, stats, navigation, and changed files |
+| `GET /api/git/commit?path=/&hash=<sha>` | Git commit details, stats, navigation, and changed files (`includeAdjacent=0` skips navigation lookup) |
 | `POST /api/git/revert` | Discard changes for one git file |
 
 ### Response format

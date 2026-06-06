@@ -575,6 +575,7 @@ async function handleGitLog(url: URL, options: ApiRoutesOptions): Promise<Respon
 async function handleGitCommit(url: URL, options: ApiRoutesOptions): Promise<Response> {
   const requestPath = url.searchParams.get('path') || '/'
   const hash = url.searchParams.get('hash') || ''
+  const includeAdjacent = url.searchParams.get('includeAdjacent') !== '0'
 
   if (!hash) {
     return jsonResponse({ error: 'hash is required' }, { status: 400 })
@@ -588,7 +589,7 @@ async function handleGitCommit(url: URL, options: ApiRoutesOptions): Promise<Res
 
   try {
     const [commit, repoRoot] = await Promise.all([
-      getGitCommit(safePath.fullPath, hash),
+      getGitCommit(safePath.fullPath, hash, { includeAdjacent }),
       findGitRoot(safePath.fullPath),
     ])
     const repoPath = repoRoot ? toServedPath(options.root, repoRoot) : null
