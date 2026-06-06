@@ -3,8 +3,8 @@ import os from 'os'
 import { basename, dirname, extname, join, relative } from 'path'
 import { getMimeType, getFileExtension, resolveSafePath, createIgnoreMatcher } from '@vforsh/browsey-shared'
 import type { IgnoreMatcher } from '@vforsh/browsey-shared'
-import { getGitStatus, getGitLog, getGitChanges } from './git.js'
-import type { ApiRoutesOptions, FileItem, ListResponse, SearchResult, SearchResponse, GitStatusResponse, GitLogResponse, GitChangesResponse, HealthResponse } from '@vforsh/browsey-shared'
+import { findGitRoot, getGitStatus, getGitLog, getGitCommit, getGitChanges, revertGitFile, GitOperationError } from './git.js'
+import type { ApiRoutesOptions, FileItem, ListResponse, SearchResult, SearchResponse, GitStatusResponse, GitLogResponse, GitCommitResponse, GitCommitFile, GitChangesResponse, GitRevertResponse, HealthResponse } from '@vforsh/browsey-shared'
 
 const JSON_HEADERS = {
   'Content-Type': 'application/json',
@@ -80,6 +80,44 @@ function getHealthResponse(readonly: boolean): HealthResponse {
   }
 }
 
+function toServedPath(root: string, fullPath: string): string | null {
+  const relativePath = relative(root, fullPath)
+  if (relativePath && !relativePath.startsWith('..') && !relativePath.startsWith('/')) {
+    return '/' + relativePath.replace(/\\/g, '/')
+  }
+  if (relativePath === '') {
+    return '/'
+  }
+  return null
+}
+
+function joinServedPath(basePath: string, filePath: string): string {
+  const normalizedBase = basePath.replace(/\/$/, '')
+  const normalizedFile = filePath.replace(/^\/+/, '')
+  return `${normalizedBase || ''}/${normalizedFile}`
+}
+
+async function withWorkingTreePaths(
+  files: GitCommitFile[],
+  repoPath: string | null,
+  root: string
+): Promise<GitCommitFile[]> {
+  if (!repoPath) return files
+
+  return Promise.all(files.map(async (file) => {
+    const workingTreePath = joinServedPath(repoPath, file.path)
+    const safeFilePath = resolveSafePath(root, workingTreePath)
+    if (!safeFilePath) return file
+
+    try {
+      await fs.access(safeFilePath.fullPath)
+      return { ...file, workingTreePath }
+    } catch {
+      return file
+    }
+  }))
+}
+
 export async function handleApiRequest(
   req: Request,
   options: ApiRoutesOptions
@@ -115,8 +153,14 @@ export async function handleApiRequest(
   if (route === '/git/log') {
     return handleGitLog(url, options)
   }
+  if (route === '/git/commit') {
+    return handleGitCommit(url, options)
+  }
   if (route === '/git/changes') {
     return handleGitChanges(url, options)
+  }
+  if (route === '/git/revert' && req.method === 'POST') {
+    return handleGitRevert(req, options)
   }
   if (route === '/rename' && req.method === 'POST') {
     return handleRename(req, options)
@@ -528,6 +572,37 @@ async function handleGitLog(url: URL, options: ApiRoutesOptions): Promise<Respon
   }
 }
 
+async function handleGitCommit(url: URL, options: ApiRoutesOptions): Promise<Response> {
+  const requestPath = url.searchParams.get('path') || '/'
+  const hash = url.searchParams.get('hash') || ''
+
+  if (!hash) {
+    return jsonResponse({ error: 'hash is required' }, { status: 400 })
+  }
+
+  const safePath = resolveSafePath(options.root, requestPath)
+
+  if (!safePath) {
+    return jsonResponse({ error: 'Access denied: Invalid path' }, { status: 403 })
+  }
+
+  try {
+    const [commit, repoRoot] = await Promise.all([
+      getGitCommit(safePath.fullPath, hash),
+      findGitRoot(safePath.fullPath),
+    ])
+    const repoPath = repoRoot ? toServedPath(options.root, repoRoot) : null
+    const files = await withWorkingTreePaths(commit.files, repoPath, options.root)
+    const response: GitCommitResponse = { commit: { ...commit, files } }
+    return jsonResponse(response)
+  } catch (error) {
+    if (error instanceof GitOperationError) {
+      return jsonResponse({ error: error.message }, { status: error.status })
+    }
+    return jsonResponse({ error: 'Internal server error' }, { status: 500 })
+  }
+}
+
 async function handleGitChanges(url: URL, options: ApiRoutesOptions): Promise<Response> {
   const requestPath = url.searchParams.get('path') || '/'
   const safePath = resolveSafePath(options.root, requestPath)
@@ -538,21 +613,46 @@ async function handleGitChanges(url: URL, options: ApiRoutesOptions): Promise<Re
 
   try {
     const result = await getGitChanges(safePath.fullPath)
-    let repoPath: string | null = null
-    if (result.repoPath) {
-      const relativeRepoPath = relative(options.root, result.repoPath)
-      if (relativeRepoPath && !relativeRepoPath.startsWith('..') && !relativeRepoPath.startsWith('/')) {
-        repoPath = '/' + relativeRepoPath.replace(/\\/g, '/')
-      } else if (relativeRepoPath === '') {
-        repoPath = '/'
-      }
-    }
+    const repoPath = result.repoPath ? toServedPath(options.root, result.repoPath) : null
     const response: GitChangesResponse = {
       ...result,
       repoPath,
     }
     return jsonResponse(response)
   } catch {
+    return jsonResponse({ error: 'Internal server error' }, { status: 500 })
+  }
+}
+
+async function handleGitRevert(req: Request, options: ApiRoutesOptions): Promise<Response> {
+  if (options.readonly) {
+    return jsonResponse({ error: 'Server is in read-only mode' }, { status: 403 })
+  }
+
+  let body: { path?: string; filePath?: string }
+  try {
+    body = await req.json()
+  } catch {
+    return jsonResponse({ error: 'Invalid JSON body' }, { status: 400 })
+  }
+
+  const { path: requestPath, filePath } = body
+  if (!requestPath || !filePath) {
+    return jsonResponse({ error: 'path and filePath are required' }, { status: 400 })
+  }
+
+  const safePath = resolveSafePath(options.root, requestPath)
+  if (!safePath) {
+    return jsonResponse({ error: 'Access denied: Invalid path' }, { status: 403 })
+  }
+
+  try {
+    await revertGitFile(safePath.fullPath, filePath)
+    return jsonResponse({ ok: true } satisfies GitRevertResponse)
+  } catch (error) {
+    if (error instanceof GitOperationError) {
+      return jsonResponse({ error: error.message }, { status: error.status })
+    }
     return jsonResponse({ error: 'Internal server error' }, { status: 500 })
   }
 }

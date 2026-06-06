@@ -140,8 +140,38 @@ export type GitLogResponse = {
   hasMore: boolean
 }
 
+export type GitCommitFile = {
+  path: string
+  originalPath?: string
+  status: string
+  workingTreePath: string | null
+}
+
+export type GitCommitStats = {
+  files: number
+  additions: number
+  deletions: number
+}
+
+export type GitCommitDetails = CommitInfo & {
+  body: string
+  authorEmail: string
+  committer: string
+  committerEmail: string
+  commitDate: string
+  previousCommit: CommitInfo | null
+  nextCommit: CommitInfo | null
+  stats: GitCommitStats
+  files: GitCommitFile[]
+}
+
+export type GitCommitResponse = {
+  commit: GitCommitDetails
+}
+
 export type GitChangeFile = {
   path: string
+  originalPath?: string
   indexStatus: string
   workTreeStatus: string
 }
@@ -151,4 +181,8 @@ export type GitChangesResponse = {
   staged: GitChangeFile[]
   unstaged: GitChangeFile[]
   untracked: GitChangeFile[]
+}
+
+export type GitRevertResponse = {
+  ok: true
 }
