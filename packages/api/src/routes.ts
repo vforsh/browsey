@@ -1,6 +1,6 @@
 import { promises as fs } from 'fs'
 import os from 'os'
-import { basename, dirname, extname, join, relative } from 'path'
+import { basename, dirname, extname, join, relative, resolve } from 'path'
 import { getMimeType, getFileExtension, resolveSafePath, createIgnoreMatcher } from '@vforsh/browsey-shared'
 import type { IgnoreMatcher } from '@vforsh/browsey-shared'
 import { findGitRoot, getGitStatus, getGitLog, getGitCommit, getGitChanges, revertGitFile, GitOperationError } from './git.js'
@@ -89,6 +89,44 @@ function toServedPath(root: string, fullPath: string): string | null {
     return '/'
   }
   return null
+}
+
+async function readSymlinkTarget(root: string, linkPath: string): Promise<{
+  linkTarget: string
+  targetPath: string | null
+  targetAbsolutePath: string
+  targetType: 'file' | 'directory' | null
+  linkBroken: boolean
+  targetSize: number
+}> {
+  const linkTarget = await fs.readlink(linkPath)
+  const targetAbsolutePath = resolve(dirname(linkPath), linkTarget)
+  const linkServedPath = toServedPath(root, linkPath)
+
+  try {
+    const targetStat = await fs.stat(linkPath)
+    return {
+      linkTarget,
+      targetPath: toServedPath(root, targetAbsolutePath) ?? linkServedPath,
+      targetAbsolutePath,
+      targetType: targetStat.isDirectory() ? 'directory' : 'file',
+      linkBroken: false,
+      targetSize: targetStat.size,
+    }
+  } catch {
+    return {
+      linkTarget,
+      targetPath: null,
+      targetAbsolutePath,
+      targetType: null,
+      linkBroken: true,
+      targetSize: 0,
+    }
+  }
+}
+
+function entryExtension(entryName: string, targetType: 'file' | 'directory' | null, isFile: boolean): string | null {
+  return isFile || targetType === 'file' ? getFileExtension(entryName) : null
 }
 
 function joinServedPath(basePath: string, filePath: string): string {
@@ -211,22 +249,52 @@ async function handleList(url: URL, options: ApiRoutesOptions): Promise<Response
 
       const entryPath = join(safePath.fullPath, entry.name)
       try {
-        const entryStat = await fs.stat(entryPath)
-        items.push({
-          name: entry.name,
-          type: entry.isDirectory() ? 'directory' : 'file',
-          size: entryStat.size,
-          modified: entryStat.mtime.toISOString(),
-          extension: entry.isFile() ? getFileExtension(entry.name) : null,
-          absolutePath: entryPath,
-        })
+        const entryStat = entry.isSymbolicLink()
+          ? await fs.lstat(entryPath)
+          : await fs.stat(entryPath)
+
+        if (entry.isSymbolicLink()) {
+          const target = await readSymlinkTarget(options.root, entryPath)
+          items.push({
+            name: entry.name,
+            type: 'symlink',
+            size: target.linkBroken ? entryStat.size : target.targetSize,
+            modified: entryStat.mtime.toISOString(),
+            extension: entryExtension(entry.name, target.targetType, false),
+            absolutePath: entryPath,
+            ...target,
+          })
+          continue
+        }
+
+        if (entry.isDirectory()) {
+          items.push({
+            name: entry.name,
+            type: 'directory',
+            size: entryStat.size,
+            modified: entryStat.mtime.toISOString(),
+            extension: null,
+            absolutePath: entryPath,
+          })
+        } else {
+          items.push({
+            name: entry.name,
+            type: 'file',
+            size: entryStat.size,
+            modified: entryStat.mtime.toISOString(),
+            extension: getFileExtension(entry.name),
+            absolutePath: entryPath,
+          })
+        }
       } catch {
         // Skip entries we can't stat
       }
     }
 
     items.sort((a, b) => {
-      if (a.type !== b.type) return a.type === 'directory' ? -1 : 1
+      const aIsDirectory = a.type === 'directory' || (a.type === 'symlink' && a.targetType === 'directory')
+      const bIsDirectory = b.type === 'directory' || (b.type === 'symlink' && b.targetType === 'directory')
+      if (aIsDirectory !== bIsDirectory) return aIsDirectory ? -1 : 1
       return a.name.localeCompare(b.name)
     })
 
@@ -362,7 +430,20 @@ async function handleStat(url: URL, options: ApiRoutesOptions): Promise<Response
   }
 
   try {
-    const stat = await fs.stat(safePath.fullPath)
+    const stat = await fs.lstat(safePath.fullPath)
+
+    if (stat.isSymbolicLink()) {
+      const target = await readSymlinkTarget(options.root, safePath.fullPath)
+      return jsonResponse({
+        name: basename(safePath.fullPath),
+        type: 'symlink',
+        size: target.linkBroken ? stat.size : target.targetSize,
+        modified: stat.mtime.toISOString(),
+        created: stat.birthtime.toISOString(),
+        extension: entryExtension(basename(safePath.fullPath), target.targetType, false),
+        ...target,
+      })
+    }
 
     return jsonResponse({
       name: basename(safePath.fullPath),
@@ -442,7 +523,8 @@ function fuzzyScore(text: string, pattern: string): number {
 }
 
 async function searchRecursive(
-  rootPath: string,
+  servedRoot: string,
+  searchRootPath: string,
   currentPath: string,
   query: string,
   showHidden: boolean,
@@ -464,25 +546,49 @@ async function searchRecursive(
       if (ignore(entry.name)) continue
 
       const entryPath = join(currentPath, entry.name)
-      const relativePath = relative(rootPath, entryPath)
+      const relativePath = relative(searchRootPath, entryPath)
 
       // Score the file name against the query
       const score = fuzzyScore(entry.name, query)
+      const isSymlink = entry.isSymbolicLink()
+      const target = isSymlink ? await readSymlinkTarget(servedRoot, entryPath) : null
 
       if (score > 0) {
-        results.push({
-          name: entry.name,
-          path: '/' + relativePath.replace(/\\/g, '/'),
-          absolutePath: entryPath,
-          type: entry.isDirectory() ? 'directory' : 'file',
-          score,
-          extension: entry.isFile() ? getFileExtension(entry.name) : null,
-        })
+        const resultPath = '/' + relativePath.replace(/\\/g, '/')
+        if (target) {
+          results.push({
+            name: entry.name,
+            path: resultPath,
+            absolutePath: entryPath,
+            type: 'symlink',
+            score,
+            extension: entryExtension(entry.name, target.targetType, false),
+            ...target,
+          })
+        } else if (entry.isDirectory()) {
+          results.push({
+            name: entry.name,
+            path: resultPath,
+            absolutePath: entryPath,
+            type: 'directory',
+            score,
+            extension: null,
+          })
+        } else {
+          results.push({
+            name: entry.name,
+            path: resultPath,
+            absolutePath: entryPath,
+            type: 'file',
+            score,
+            extension: getFileExtension(entry.name),
+          })
+        }
       }
 
       // Recurse into directories
-      if (entry.isDirectory()) {
-        await searchRecursive(rootPath, entryPath, query, showHidden, ignore, limit, results, depth + 1)
+      if (entry.isDirectory() || target?.targetType === 'directory') {
+        await searchRecursive(servedRoot, searchRootPath, entryPath, query, showHidden, ignore, limit, results, depth + 1)
       }
     }
   } catch {
@@ -509,6 +615,7 @@ async function handleSearch(url: URL, options: ApiRoutesOptions): Promise<Respon
   try {
     const ignore = createIgnoreMatcher(options.ignorePatterns)
     const results = await searchRecursive(
+      options.root,
       safePath.fullPath,
       safePath.fullPath,
       query,

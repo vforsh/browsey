@@ -11,6 +11,7 @@ import {
   FolderOpen,
   Image,
   Info,
+  Link,
   Music,
   Pencil,
   Scissors,
@@ -80,14 +81,35 @@ function isFavorite(absolutePath: string): boolean {
   return getFavorites().has(absolutePath)
 }
 
-type FileItem = {
+type FileEntryBase = {
   name: string
-  type: 'file' | 'directory'
   size: number
   modified: string
-  extension: string | null
   absolutePath: string
 }
+
+type LinkTargetType = 'file' | 'directory' | null
+
+type FileItem =
+  | (FileEntryBase & {
+      type: 'file'
+      extension: string | null
+    })
+  | (FileEntryBase & {
+      type: 'directory'
+      extension: null
+    })
+  | (FileEntryBase & {
+      type: 'symlink'
+      extension: string | null
+      linkTarget: string
+      targetPath: string | null
+      targetAbsolutePath: string
+      targetType: LinkTargetType
+      linkBroken: boolean
+    })
+
+type FileEntryType = FileItem['type']
 
 type ListResponse = {
   path: string
@@ -99,23 +121,57 @@ type ViewResponse =
   | { type: 'text'; filename: string; extension: string | null; content: string; size: number }
   | { type: 'image'; filename: string; extension: string | null; url: string; size: number }
 
-type StatResponse = {
+type StatBase = {
   name: string
-  type: 'file' | 'directory'
   size: number
   modified: string
   created: string
-  extension: string | null
 }
 
-type SearchResult = {
+type StatResponse =
+  | (StatBase & {
+      type: 'file'
+      extension: string | null
+    })
+  | (StatBase & {
+      type: 'directory'
+      extension: null
+    })
+  | (StatBase & {
+      type: 'symlink'
+      extension: string | null
+      linkTarget: string
+      targetPath: string | null
+      targetAbsolutePath: string
+      targetType: LinkTargetType
+      linkBroken: boolean
+    })
+
+type SearchResultBase = {
   name: string
   path: string
   absolutePath: string
-  type: 'file' | 'directory'
   score: number
-  extension: string | null
 }
+
+type SearchResult =
+  | (SearchResultBase & {
+      type: 'file'
+      extension: string | null
+    })
+  | (SearchResultBase & {
+      type: 'directory'
+      extension: null
+    })
+  | (SearchResultBase & {
+      type: 'symlink'
+      extension: string | null
+      linkTarget: string
+      targetPath: string | null
+      targetAbsolutePath: string
+      targetType: LinkTargetType
+      linkBroken: boolean
+    })
 
 type GitStatusResponse = {
   isRepo: boolean
@@ -1088,19 +1144,19 @@ class InfoModal {
   private closeBtn: HTMLElement
   private currentPath = ''
   private currentName = ''
-  private currentType: 'file' | 'directory' = 'file'
-  private onDelete: (path: string, type: 'file' | 'directory') => void
+  private currentType: FileEntryType = 'file'
+  private onDelete: (path: string, type: FileEntryType) => void
   private onRename: (path: string, currentName: string) => void
   private onMove: (path: string) => void
-  private onCopy: (path: string, name: string, type: 'file' | 'directory') => void
-  private onCut: (path: string, name: string, type: 'file' | 'directory') => void
+  private onCopy: (path: string, name: string, type: FileEntryType) => void
+  private onCut: (path: string, name: string, type: FileEntryType) => void
 
   constructor(callbacks: {
-    onDelete: (path: string, type: 'file' | 'directory') => void
+    onDelete: (path: string, type: FileEntryType) => void
     onRename: (path: string, currentName: string) => void
     onMove: (path: string) => void
-    onCopy: (path: string, name: string, type: 'file' | 'directory') => void
-    onCut: (path: string, name: string, type: 'file' | 'directory') => void
+    onCopy: (path: string, name: string, type: FileEntryType) => void
+    onCut: (path: string, name: string, type: FileEntryType) => void
   }) {
     this.overlay = document.getElementById('info-overlay')!
     this.content = document.getElementById('info-content')!
@@ -1207,11 +1263,21 @@ class InfoModal {
   private render(data: StatResponse, absolutePath?: string): void {
     const rows: Array<{ label: string; value: string }> = [
       { label: 'Name', value: data.name },
-      { label: 'Type', value: data.type === 'directory' ? 'Folder' : 'File' },
+      { label: 'Type', value: data.type === 'directory' ? 'Folder' : data.type === 'symlink' ? 'Link' : 'File' },
     ]
 
     if (data.type === 'file') {
       rows.push({ label: 'Size', value: this.formatSize(data.size) })
+    }
+
+    if (data.type === 'symlink') {
+      rows.push({ label: 'Link Target', value: data.linkTarget || 'Unknown' })
+      if (data.linkBroken) {
+        rows.push({ label: 'Link Status', value: 'Target not found' })
+      }
+      if (data.targetAbsolutePath) {
+        rows.push({ label: 'Target Path', value: data.targetAbsolutePath })
+      }
     }
 
     if (data.extension) {
@@ -1475,8 +1541,10 @@ class SearchOverlay {
       const item = (e.target as HTMLElement).closest('.search-result-item')
       if (item) {
         const path = item.getAttribute('data-path')
-        const type = item.getAttribute('data-type')
-        if (path) this.selectResult(path, type as 'file' | 'directory')
+        const type = item.getAttribute('data-type') as FileEntryType
+        const targetPath = item.getAttribute('data-target-path')
+        const targetType = item.getAttribute('data-target-type') as 'file' | 'directory' | null
+        if (path) this.selectResult(path, type, targetPath, targetType)
       }
     })
 
@@ -1562,14 +1630,18 @@ class SearchOverlay {
 
     this.results.innerHTML = results
       .map((result, index) => {
-        const icon = result.type === 'directory' ? Folder : File
+        const icon = result.type === 'directory' ? Folder : result.type === 'symlink' ? Link : File
         const highlightedName = this.highlightMatches(result.name, query)
         const parentPath = this.getParentPath(result.path)
+        const targetAttrs = result.type === 'symlink'
+          ? `${result.targetPath ? `data-target-path="${this.escapeHtml(result.targetPath)}"` : ''} ${result.targetType ? `data-target-type="${result.targetType}"` : ''}`
+          : ''
 
         return `
           <div class="search-result-item"
                data-path="${this.escapeHtml(result.path)}"
                data-type="${result.type}"
+               ${targetAttrs}
                tabindex="0"
                ${index === 0 ? 'data-focused="true"' : ''}>
             <span class="search-result-icon" data-type="${result.type}">${icon}</span>
@@ -1607,15 +1679,16 @@ class SearchOverlay {
     return parts.length > 0 ? '/' + parts.join('/') : '/'
   }
 
-  private selectResult(path: string, type: 'file' | 'directory'): void {
+  private selectResult(path: string, type: FileEntryType, targetPath?: string | null, targetType?: 'file' | 'directory' | null): void {
     this.close()
 
     // path is relative to searchPath, so we need to combine them
-    const fullPath = this.searchPath === '/'
+    const fullPath = targetPath || (this.searchPath === '/'
       ? path
-      : this.searchPath + path
+      : this.searchPath + path)
+    const resolvedType = type === 'symlink' ? targetType : type
 
-    if (type === 'directory') {
+    if (resolvedType === 'directory') {
       this.onNavigate(fullPath)
     } else {
       const parentPath = this.getParentPath(fullPath)
@@ -1628,8 +1701,10 @@ class SearchOverlay {
     const focusedItem = this.results.querySelector('.search-result-item[data-focused="true"]')
     if (focusedItem) {
       const path = focusedItem.getAttribute('data-path')
-      const type = focusedItem.getAttribute('data-type') as 'file' | 'directory'
-      if (path) this.selectResult(path, type)
+      const type = focusedItem.getAttribute('data-type') as FileEntryType
+      const targetPath = focusedItem.getAttribute('data-target-path')
+      const targetType = focusedItem.getAttribute('data-target-type') as 'file' | 'directory' | null
+      if (path) this.selectResult(path, type, targetPath, targetType)
     }
   }
 
@@ -2693,7 +2768,7 @@ class FileBrowser {
   private previewPane: HTMLElement
   private previewHeader: HTMLElement
   private confirmDialog: ConfirmDialog
-  private clipboard: { path: string; name: string; type: 'file' | 'directory'; mode: 'copy' | 'cut' } | null = null
+  private clipboard: { path: string; name: string; type: FileEntryType; mode: 'copy' | 'cut' } | null = null
   private pasteFab: HTMLElement | null = null
 
   constructor() {
@@ -2806,9 +2881,11 @@ class FileBrowser {
       if (item) {
         const path = item.getAttribute('data-path')
         if (!path) return // Virtual "." item has no path, ignore clicks
-        const type = item.getAttribute('data-type')!
+        const type = item.getAttribute('data-type') as FileEntryType
         const extension = item.getAttribute('data-extension') || null
-        this.handleItemClick(path, type as 'file' | 'directory', extension)
+        const targetPath = item.getAttribute('data-target-path')
+        const targetType = item.getAttribute('data-target-type') as 'file' | 'directory' | null
+        this.handleItemClick(path, type, extension, targetPath, targetType)
       }
     })
 
@@ -2955,7 +3032,7 @@ class FileBrowser {
     connectScreen.show()
   }
 
-  private async handleFileDelete(path: string, type: 'file' | 'directory'): Promise<void> {
+  private async handleFileDelete(path: string, type: FileEntryType): Promise<void> {
     const name = path.split('/').pop() || path
     const message = type === 'directory'
       ? `Delete folder "${name}" and all its contents?`
@@ -3027,13 +3104,13 @@ class FileBrowser {
     }
   }
 
-  private handleFileCopy(path: string, name: string, type: 'file' | 'directory'): void {
+  private handleFileCopy(path: string, name: string, type: FileEntryType): void {
     this.clipboard = { path, name, type, mode: 'copy' }
     this.showPasteFab()
     this.showToast(`Copied "${name}"`)
   }
 
-  private handleFileCut(path: string, name: string, type: 'file' | 'directory'): void {
+  private handleFileCut(path: string, name: string, type: FileEntryType): void {
     this.clipboard = { path, name, type, mode: 'cut' }
     this.showPasteFab()
     this.showToast(`Cut "${name}"`)
@@ -3226,20 +3303,30 @@ class FileBrowser {
     // Sort favorite directories to top
     const favs = getFavorites()
     const sorted = [...items].sort((a, b) => {
-      const aFav = a.type === 'directory' && favs.has(a.absolutePath)
-      const bFav = b.type === 'directory' && favs.has(b.absolutePath)
+      const aIsDirectory = a.type === 'directory' || (a.type === 'symlink' && a.targetType === 'directory')
+      const bIsDirectory = b.type === 'directory' || (b.type === 'symlink' && b.targetType === 'directory')
+      const aFav = aIsDirectory && favs.has(a.absolutePath)
+      const bFav = bIsDirectory && favs.has(b.absolutePath)
       if (aFav !== bFav) return aFav ? -1 : 1
-      if (a.type !== b.type) return a.type === 'directory' ? -1 : 1
+      if (aIsDirectory !== bIsDirectory) return aIsDirectory ? -1 : 1
       return a.name.localeCompare(b.name)
     })
 
     const html = sorted
       .map((item) => {
         const itemPath = this.currentPath === '/' ? `/${item.name}` : `${this.currentPath}/${item.name}`
-        const favClass = item.type === 'directory' && favs.has(item.absolutePath) ? ' favorite' : ''
+        const isDirectory = item.type === 'directory' || (item.type === 'symlink' && item.targetType === 'directory')
+        const favClass = isDirectory && favs.has(item.absolutePath) ? ' favorite' : ''
+        const targetAttrs = item.type === 'symlink'
+          ? `${item.targetPath ? `data-target-path="${this.escapeHtml(item.targetPath)}"` : ''} ${item.targetType ? `data-target-type="${item.targetType}"` : ''}`
+          : ''
 
         return `
-        <div class="file-item${favClass}" data-path="${this.escapeHtml(itemPath)}" data-type="${item.type}" data-extension="${item.extension || ''}">
+        <div class="file-item${favClass}"
+             data-path="${this.escapeHtml(itemPath)}"
+             data-type="${item.type}"
+             data-extension="${item.extension || ''}"
+             ${targetAttrs}>
           <span class="file-icon">${this.getIcon(item)}</span>
           <div class="file-info">
             <div class="file-name">${this.escapeHtml(item.name)}</div>
@@ -3328,23 +3415,32 @@ class FileBrowser {
     })
   }
 
-  private handleItemClick(path: string, type: 'file' | 'directory', extension: string | null): void {
-    if (type === 'directory') {
+  private handleItemClick(
+    path: string,
+    type: FileEntryType,
+    extension: string | null,
+    targetPath?: string | null,
+    targetType?: 'file' | 'directory' | null
+  ): void {
+    const resolvedPath = targetPath || path
+    const resolvedType = type === 'symlink' ? targetType : type
+
+    if (resolvedType === 'directory') {
       if (isTwoPaneMode()) {
         this.closePreview()
       }
-      this.navigate(path)
+      this.navigate(resolvedPath)
     } else {
       // Check if file is viewable
       const viewableType = isViewable(extension)
       if (viewableType) {
         if (isTwoPaneMode()) {
-          this.openInlineViewer(path)
+          this.openInlineViewer(resolvedPath)
         } else {
-          this.openViewer(path)
+          this.openViewer(resolvedPath)
         }
       } else {
-        this.downloadFile(path)
+        this.downloadFile(resolvedPath)
       }
     }
   }
@@ -3583,6 +3679,7 @@ class FileBrowser {
 
   private getIcon(item: FileItem): string {
     if (item.type === 'directory') return isFavorite(item.absolutePath) ? Star : Folder
+    if (item.type === 'symlink') return Link
 
     const iconMap: Record<string, string> = {
       // Documents
@@ -3672,6 +3769,9 @@ class FileBrowser {
   private formatMeta(item: FileItem): string {
     if (item.type === 'directory') {
       return this.formatDate(item.modified)
+    }
+    if (item.type === 'symlink' && item.linkBroken) {
+      return 'Broken link'
     }
     const size = this.formatSize(item.size)
     const date = this.formatDate(item.modified)

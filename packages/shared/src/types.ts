@@ -30,14 +30,31 @@ export type AppServerOptions = {
   watch?: boolean
 }
 
-export type FileItem = {
+type FileEntryBase = {
   name: string
-  type: 'file' | 'directory'
   size: number
   modified: string
-  extension: string | null
   absolutePath: string
 }
+
+export type FileItem =
+  | (FileEntryBase & {
+      type: 'file'
+      extension: string | null
+    })
+  | (FileEntryBase & {
+      type: 'directory'
+      extension: null
+    })
+  | (FileEntryBase & {
+      type: 'symlink'
+      extension: string | null
+      linkTarget: string
+      targetPath: string | null
+      targetAbsolutePath: string
+      targetType: 'file' | 'directory' | null
+      linkBroken: boolean
+    })
 
 export type ListResponse = {
   path: string
@@ -79,14 +96,31 @@ export interface RegistryFile {
   instances: InstanceInfo[]
 }
 
-export type SearchResult = {
+type SearchResultBase = {
   name: string
   path: string
   absolutePath: string
-  type: 'file' | 'directory'
   score: number
-  extension: string | null
 }
+
+export type SearchResult =
+  | (SearchResultBase & {
+      type: 'file'
+      extension: string | null
+    })
+  | (SearchResultBase & {
+      type: 'directory'
+      extension: null
+    })
+  | (SearchResultBase & {
+      type: 'symlink'
+      extension: string | null
+      linkTarget: string
+      targetPath: string | null
+      targetAbsolutePath: string
+      targetType: 'file' | 'directory' | null
+      linkBroken: boolean
+    })
 
 export type SearchResponse = {
   query: string
