@@ -62,6 +62,29 @@ export type ListResponse = {
   items: FileItem[]
 }
 
+export type ViewResponse =
+  | {
+      type: 'text'
+      filename: string
+      extension: string | null
+      content: string
+      size: number
+    }
+  | {
+      type: 'image'
+      filename: string
+      extension: string | null
+      url: string
+      size: number
+    }
+  | {
+      type: 'video'
+      filename: string
+      extension: string | null
+      url: string
+      size: number
+    }
+
 export type ApiRoutesOptions = {
   root: string
   readonly: boolean

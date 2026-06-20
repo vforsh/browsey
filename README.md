@@ -98,6 +98,7 @@ Browsey exposes a simple REST API:
 |----------|-------------|
 | `GET /api/list?path=/` | List directory contents |
 | `GET /api/file?path=/file.txt` | Download a file |
+| `GET /api/view?path=/file.txt` | View text, images, and supported videos |
 | `GET /api/stat?path=/file.txt` | Get file metadata |
 | `GET /api/git/changes?path=/` | Git file changes |
 | `GET /api/git/commit?path=/&hash=<sha>` | Git commit details, stats, navigation, and changed files (`includeAdjacent=0` skips navigation lookup) |

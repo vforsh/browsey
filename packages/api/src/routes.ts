@@ -4,7 +4,7 @@ import { basename, dirname, extname, join, relative, resolve } from 'path'
 import { getMimeType, getFileExtension, resolveSafePath, createIgnoreMatcher } from '@vforsh/browsey-shared'
 import type { IgnoreMatcher } from '@vforsh/browsey-shared'
 import { findGitRoot, getGitStatus, getGitLog, getGitCommit, getGitChanges, revertGitFile, GitOperationError } from './git.js'
-import type { ApiRoutesOptions, FileItem, ListResponse, SearchResult, SearchResponse, GitStatusResponse, GitLogResponse, GitCommitResponse, GitCommitFile, GitChangesResponse, GitRevertResponse, HealthResponse } from '@vforsh/browsey-shared'
+import type { ApiRoutesOptions, FileItem, ListResponse, SearchResult, SearchResponse, GitStatusResponse, GitLogResponse, GitCommitResponse, GitCommitFile, GitChangesResponse, GitRevertResponse, HealthResponse, ViewResponse } from '@vforsh/browsey-shared'
 
 const JSON_HEADERS = {
   'Content-Type': 'application/json',
@@ -32,11 +32,20 @@ const IMAGE_EXTENSIONS = new Set([
   'png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'ico', 'bmp', 'avif',
 ])
 
-// Max file size for viewing (5MB for text, 20MB for images)
+const VIDEO_EXTENSIONS = new Set([
+  'mp4', 'mov', 'webm',
+])
+
+// Max file size for viewing (5MB for text, 20MB for images; videos stream via /api/file)
 const MAX_TEXT_SIZE = 5 * 1024 * 1024
 const MAX_IMAGE_SIZE = 20 * 1024 * 1024
 
-type ViewableType = 'text' | 'image' | null
+type ViewableType = 'text' | 'image' | 'video' | null
+
+type ByteRange = {
+  start: number
+  end: number
+}
 
 function getViewableType(extension: string | null, size: number): ViewableType {
   if (!extension) return null
@@ -48,7 +57,47 @@ function getViewableType(extension: string | null, size: number): ViewableType {
   if (IMAGE_EXTENSIONS.has(ext) && size <= MAX_IMAGE_SIZE) {
     return 'image'
   }
+  if (VIDEO_EXTENSIONS.has(ext)) {
+    return 'video'
+  }
   return null
+}
+
+function parseByteRange(rangeHeader: string | null, size: number): ByteRange | null | 'invalid' {
+  if (!rangeHeader) return null
+  if (size <= 0) return 'invalid'
+
+  const match = /^bytes=(\d*)-(\d*)$/.exec(rangeHeader.trim())
+  if (!match) return 'invalid'
+
+  const [, startRaw, endRaw] = match
+  if (!startRaw && !endRaw) return 'invalid'
+
+  if (!startRaw) {
+    const suffixLength = Number(endRaw)
+    if (!Number.isSafeInteger(suffixLength) || suffixLength <= 0) return 'invalid'
+    return {
+      start: Math.max(size - suffixLength, 0),
+      end: size - 1,
+    }
+  }
+
+  const start = Number(startRaw)
+  const requestedEnd = endRaw ? Number(endRaw) : size - 1
+  if (
+    !Number.isSafeInteger(start) ||
+    !Number.isSafeInteger(requestedEnd) ||
+    start < 0 ||
+    requestedEnd < start ||
+    start >= size
+  ) {
+    return 'invalid'
+  }
+
+  return {
+    start,
+    end: Math.min(requestedEnd, size - 1),
+  }
 }
 
 function jsonResponse(data: unknown, init?: ResponseInit): Response {
@@ -174,7 +223,7 @@ export async function handleApiRequest(
     return handleList(url, options)
   }
   if (route === '/file') {
-    return handleFile(url, options)
+    return handleFile(req, url, options)
   }
   if (route === '/view') {
     return handleView(url, options)
@@ -317,7 +366,7 @@ async function handleList(url: URL, options: ApiRoutesOptions): Promise<Response
   }
 }
 
-async function handleFile(url: URL, options: ApiRoutesOptions): Promise<Response> {
+async function handleFile(req: Request, url: URL, options: ApiRoutesOptions): Promise<Response> {
   const requestPath = url.searchParams.get('path')
   if (!requestPath) {
     return jsonResponse({ error: 'Path required' }, { status: 400 })
@@ -342,10 +391,36 @@ async function handleFile(url: URL, options: ApiRoutesOptions): Promise<Response
     const headers: Record<string, string> = {
       'Content-Type': getMimeType(safePath.fullPath),
       'Content-Length': stat.size.toString(),
+      'Accept-Ranges': 'bytes',
     }
 
     if (download) {
       headers['Content-Disposition'] = `attachment; filename="${encodeURIComponent(filename)}"`
+    }
+
+    const range = parseByteRange(req.headers.get('range'), stat.size)
+    if (range === 'invalid') {
+      return new Response(null, {
+        status: 416,
+        headers: {
+          ...headers,
+          'Content-Range': `bytes */${stat.size}`,
+          'Content-Length': '0',
+        },
+      })
+    }
+
+    if (range) {
+      const length = range.end - range.start + 1
+      const body = await file.slice(range.start, range.end + 1).arrayBuffer()
+      return new Response(body, {
+        status: 206,
+        headers: {
+          ...headers,
+          'Content-Length': length.toString(),
+          'Content-Range': `bytes ${range.start}-${range.end}/${stat.size}`,
+        },
+      })
     }
 
     return new Response(file, { headers })
@@ -395,17 +470,17 @@ async function handleView(url: URL, options: ApiRoutesOptions): Promise<Response
         extension,
         content,
         size: stat.size,
-      })
+      } satisfies ViewResponse)
     }
 
-    // For images, return the URL to fetch the image directly (inline, not download)
+    // For binary previews, return the URL to fetch the file directly (inline, not download).
     return jsonResponse({
-      type: 'image',
+      type: viewableType,
       filename,
       extension,
       url: `/api/file?path=${encodeURIComponent(requestPath)}&download=false`,
       size: stat.size,
-    })
+    } satisfies ViewResponse)
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code
     if (code === 'ENOENT') {

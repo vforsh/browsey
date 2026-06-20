@@ -155,7 +155,8 @@ browsey app reload <target>           # alias: restart
 - Text files (50+ extensions): Syntax highlighting via highlight.js
 - Markdown: Rendered via marked.js
 - Images (9 formats): Navigation between siblings, swipe support
-- Size limits: 5MB text, 20MB images
+- Videos (mp4, mov, webm): Streamed from `/api/file` with HTTP Range support
+- Size limits: 5MB text, 20MB images; videos are not size-limited by `/api/view`
 
 ## TypeScript Configuration
 
