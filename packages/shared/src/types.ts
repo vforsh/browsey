@@ -69,6 +69,7 @@ export type ViewResponse =
       extension: string | null
       content: string
       size: number
+      modified: string
     }
   | {
       type: 'image'
@@ -84,6 +85,12 @@ export type ViewResponse =
       url: string
       size: number
     }
+
+export type SaveTextResponse = {
+  ok: true
+  modified: string
+  size: number
+}
 
 export type ApiRoutesOptions = {
   root: string

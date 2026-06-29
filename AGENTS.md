@@ -115,6 +115,7 @@ browsey app reload <target>           # alias: restart
 | `GET /api/view?path=/file.txt` | View file in browser |
 | `GET /api/stat?path=/file.txt` | Get file metadata |
 | `GET /api/search?path=/&q=term` | Fuzzy file search |
+| `POST /api/save` | Save an existing text file; requires read-write mode and `baseModified`/`baseSize` conflict guards |
 | `GET /api/git?path=/` | Git repository status |
 | `GET /api/git/log?path=/` | Git commit history |
 | `GET /api/git/changes?path=/` | Git file changes |
@@ -135,6 +136,7 @@ browsey app reload <target>           # alias: restart
 - **Path traversal prevention**: All paths go through `resolveSafePath()` in shared package
 - **Constant-time token comparison** in `auth.ts`
 - **Readonly mode by default** - modifications require `--no-readonly` flag
+- **Text saves use conflict guards** - clients must pass the `modified` and `size` values from `/api/view` as `baseModified`/`baseSize`
 - **Null byte filtering** in path handling
 
 ### Instance Registry

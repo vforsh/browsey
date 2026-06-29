@@ -1,10 +1,11 @@
 import { promises as fs } from 'fs'
+import { randomUUID } from 'crypto'
 import os from 'os'
 import { basename, dirname, extname, join, relative, resolve } from 'path'
 import { getMimeType, getFileExtension, resolveSafePath, createIgnoreMatcher } from '@vforsh/browsey-shared'
 import type { IgnoreMatcher } from '@vforsh/browsey-shared'
 import { findGitRoot, getGitStatus, getGitLog, getGitCommit, getGitChanges, revertGitFile, GitOperationError } from './git.js'
-import type { ApiRoutesOptions, FileItem, ListResponse, SearchResult, SearchResponse, GitStatusResponse, GitLogResponse, GitCommitResponse, GitCommitFile, GitChangesResponse, GitRevertResponse, HealthResponse, ViewResponse } from '@vforsh/browsey-shared'
+import type { ApiRoutesOptions, FileItem, ListResponse, SearchResult, SearchResponse, GitStatusResponse, GitLogResponse, GitCommitResponse, GitCommitFile, GitChangesResponse, GitRevertResponse, HealthResponse, ViewResponse, SaveTextResponse } from '@vforsh/browsey-shared'
 
 const JSON_HEADERS = {
   'Content-Type': 'application/json',
@@ -45,6 +46,13 @@ type ViewableType = 'text' | 'image' | 'video' | null
 type ByteRange = {
   start: number
   end: number
+}
+
+type SaveTextBody = {
+  path?: unknown
+  content?: unknown
+  baseModified?: unknown
+  baseSize?: unknown
 }
 
 function getViewableType(extension: string | null, size: number): ViewableType {
@@ -108,6 +116,24 @@ function jsonResponse(data: unknown, init?: ResponseInit): Response {
       ...(init?.headers ?? {}),
     },
   })
+}
+
+function isTextEditable(extension: string | null): boolean {
+  return extension !== null && TEXT_EXTENSIONS.has(extension.toLowerCase())
+}
+
+async function writeTextFileAtomically(filePath: string, content: string, mode: number): Promise<void> {
+  const dir = dirname(filePath)
+  const name = basename(filePath)
+  const tempPath = join(dir, `.${name}.browsey-${process.pid}-${randomUUID()}.tmp`)
+
+  try {
+    await fs.writeFile(tempPath, content, { encoding: 'utf-8', mode })
+    await fs.rename(tempPath, filePath)
+  } catch (error) {
+    await fs.rm(tempPath, { force: true }).catch(() => {})
+    throw error
+  }
 }
 
 function getHealthResponse(readonly: boolean): HealthResponse {
@@ -248,6 +274,9 @@ export async function handleApiRequest(
   }
   if (route === '/git/revert' && req.method === 'POST') {
     return handleGitRevert(req, options)
+  }
+  if (route === '/save' && req.method === 'POST') {
+    return handleSaveText(req, options)
   }
   if (route === '/rename' && req.method === 'POST') {
     return handleRename(req, options)
@@ -470,6 +499,7 @@ async function handleView(url: URL, options: ApiRoutesOptions): Promise<Response
         extension,
         content,
         size: stat.size,
+        modified: stat.mtime.toISOString(),
       } satisfies ViewResponse)
     }
 
@@ -481,6 +511,73 @@ async function handleView(url: URL, options: ApiRoutesOptions): Promise<Response
       url: `/api/file?path=${encodeURIComponent(requestPath)}&download=false`,
       size: stat.size,
     } satisfies ViewResponse)
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code
+    if (code === 'ENOENT') {
+      return jsonResponse({ error: 'File not found' }, { status: 404 })
+    }
+    if (code === 'EACCES') {
+      return jsonResponse({ error: 'Permission denied' }, { status: 403 })
+    }
+    return jsonResponse({ error: 'Internal server error' }, { status: 500 })
+  }
+}
+
+async function handleSaveText(req: Request, options: ApiRoutesOptions): Promise<Response> {
+  if (options.readonly) {
+    return jsonResponse({ error: 'Server is in read-only mode' }, { status: 403 })
+  }
+
+  let body: SaveTextBody
+  try {
+    body = await req.json()
+  } catch {
+    return jsonResponse({ error: 'Invalid JSON body' }, { status: 400 })
+  }
+
+  const { path: requestPath, content, baseModified, baseSize } = body
+  if (typeof requestPath !== 'string' || typeof content !== 'string') {
+    return jsonResponse({ error: 'path and content are required' }, { status: 400 })
+  }
+  if (typeof baseModified !== 'string' || typeof baseSize !== 'number' || !Number.isSafeInteger(baseSize)) {
+    return jsonResponse({ error: 'baseModified and baseSize are required' }, { status: 400 })
+  }
+
+  const safePath = resolveSafePath(options.root, requestPath)
+  if (!safePath) {
+    return jsonResponse({ error: 'Access denied: Invalid path' }, { status: 403 })
+  }
+
+  try {
+    const stat = await fs.lstat(safePath.fullPath)
+    if (!stat.isFile()) {
+      return jsonResponse({ error: 'Can only save regular files' }, { status: 400 })
+    }
+
+    const extension = getFileExtension(basename(safePath.fullPath))
+    if (!isTextEditable(extension)) {
+      return jsonResponse({ error: 'File type is not editable as text' }, { status: 400 })
+    }
+
+    if (Buffer.byteLength(content, 'utf-8') > MAX_TEXT_SIZE) {
+      return jsonResponse({ error: 'File is too large to save as text' }, { status: 413 })
+    }
+
+    if (stat.mtime.toISOString() !== baseModified || stat.size !== baseSize) {
+      return jsonResponse({
+        error: 'File changed on server',
+        modified: stat.mtime.toISOString(),
+        size: stat.size,
+      }, { status: 409 })
+    }
+
+    await writeTextFileAtomically(safePath.fullPath, content, stat.mode)
+    const nextStat = await fs.stat(safePath.fullPath)
+    return jsonResponse({
+      ok: true,
+      modified: nextStat.mtime.toISOString(),
+      size: nextStat.size,
+    } satisfies SaveTextResponse)
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code
     if (code === 'ENOENT') {
