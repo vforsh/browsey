@@ -62,6 +62,27 @@ export type ListResponse = {
   items: FileItem[]
 }
 
+export type SyncManifestDirectory = {
+  path: string
+  absolutePath: string
+  /** Listing returned by `hidden=1`. */
+  items: FileItem[]
+}
+
+export type SyncManifestResponse =
+  | {
+      path: string
+      revision: string
+      unchanged: true
+    }
+  | {
+      path: string
+      revision: string
+      unchanged: false
+      showHidden: boolean
+      directories: SyncManifestDirectory[]
+    }
+
 export type ViewResponse =
   | {
       type: 'text'

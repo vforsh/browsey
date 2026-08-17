@@ -97,6 +97,7 @@ Browsey exposes a simple REST API:
 | Endpoint | Description |
 |----------|-------------|
 | `GET /api/list?path=/` | List directory contents |
+| `GET /api/sync/manifest?path=/&revision=<sha256>` | Recursively snapshot a tree for offline sync; matching revisions return `unchanged: true` |
 | `GET /api/file?path=/file.txt` | Download a file |
 | `GET /api/view?path=/file.txt` | View text, images, and supported videos |
 | `GET /api/stat?path=/file.txt` | Get file metadata |

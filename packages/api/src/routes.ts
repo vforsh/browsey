@@ -1,11 +1,12 @@
 import { promises as fs } from 'fs'
-import { randomUUID } from 'crypto'
+import { createHash, randomUUID } from 'crypto'
 import os from 'os'
-import { basename, dirname, extname, join, relative, resolve } from 'path'
+import { basename, dirname, extname, join, relative } from 'path'
 import { getMimeType, getFileExtension, resolveSafePath, createIgnoreMatcher } from '@vforsh/browsey-shared'
 import type { IgnoreMatcher } from '@vforsh/browsey-shared'
 import { findGitRoot, getGitStatus, getGitLog, getGitCommit, getGitChanges, revertGitFile, GitOperationError } from './git.js'
-import type { ApiRoutesOptions, FileItem, ListResponse, SearchResult, SearchResponse, GitStatusResponse, GitLogResponse, GitCommitResponse, GitCommitFile, GitChangesResponse, GitRevertResponse, HealthResponse, ViewResponse, SaveTextResponse } from '@vforsh/browsey-shared'
+import { entryExtension, readDirectoryItems, readSymlinkTarget, toServedPath } from './directory-listing.js'
+import type { ApiRoutesOptions, FileItem, ListResponse, SyncManifestDirectory, SyncManifestResponse, SearchResult, SearchResponse, GitStatusResponse, GitLogResponse, GitCommitResponse, GitCommitFile, GitChangesResponse, GitRevertResponse, HealthResponse, ViewResponse, SaveTextResponse } from '@vforsh/browsey-shared'
 
 const JSON_HEADERS = {
   'Content-Type': 'application/json',
@@ -155,55 +156,6 @@ function getHealthResponse(readonly: boolean): HealthResponse {
   }
 }
 
-function toServedPath(root: string, fullPath: string): string | null {
-  const relativePath = relative(root, fullPath)
-  if (relativePath && !relativePath.startsWith('..') && !relativePath.startsWith('/')) {
-    return '/' + relativePath.replace(/\\/g, '/')
-  }
-  if (relativePath === '') {
-    return '/'
-  }
-  return null
-}
-
-async function readSymlinkTarget(root: string, linkPath: string): Promise<{
-  linkTarget: string
-  targetPath: string | null
-  targetAbsolutePath: string
-  targetType: 'file' | 'directory' | null
-  linkBroken: boolean
-  targetSize: number
-}> {
-  const linkTarget = await fs.readlink(linkPath)
-  const targetAbsolutePath = resolve(dirname(linkPath), linkTarget)
-  const linkServedPath = toServedPath(root, linkPath)
-
-  try {
-    const targetStat = await fs.stat(linkPath)
-    return {
-      linkTarget,
-      targetPath: toServedPath(root, targetAbsolutePath) ?? linkServedPath,
-      targetAbsolutePath,
-      targetType: targetStat.isDirectory() ? 'directory' : 'file',
-      linkBroken: false,
-      targetSize: targetStat.size,
-    }
-  } catch {
-    return {
-      linkTarget,
-      targetPath: null,
-      targetAbsolutePath,
-      targetType: null,
-      linkBroken: true,
-      targetSize: 0,
-    }
-  }
-}
-
-function entryExtension(entryName: string, targetType: 'file' | 'directory' | null, isFile: boolean): string | null {
-  return isFile || targetType === 'file' ? getFileExtension(entryName) : null
-}
-
 function joinServedPath(basePath: string, filePath: string): string {
   const normalizedBase = basePath.replace(/\/$/, '')
   const normalizedFile = filePath.replace(/^\/+/, '')
@@ -247,6 +199,9 @@ export async function handleApiRequest(
   }
   if (route === '/list') {
     return handleList(url, options)
+  }
+  if (route === '/sync/manifest') {
+    return handleSyncManifest(url, options)
   }
   if (route === '/file') {
     return handleFile(req, url, options)
@@ -312,69 +267,8 @@ async function handleList(url: URL, options: ApiRoutesOptions): Promise<Response
       return jsonResponse({ error: 'Path is not a directory' }, { status: 400 })
     }
 
-    const entries = await fs.readdir(safePath.fullPath, { withFileTypes: true })
     const ignore = createIgnoreMatcher(options.ignorePatterns)
-    const items: FileItem[] = []
-
-    for (const entry of entries) {
-      if (!showHidden && entry.name.startsWith('.')) {
-        continue
-      }
-
-      if (ignore(entry.name)) {
-        continue
-      }
-
-      const entryPath = join(safePath.fullPath, entry.name)
-      try {
-        const entryStat = entry.isSymbolicLink()
-          ? await fs.lstat(entryPath)
-          : await fs.stat(entryPath)
-
-        if (entry.isSymbolicLink()) {
-          const target = await readSymlinkTarget(options.root, entryPath)
-          items.push({
-            name: entry.name,
-            type: 'symlink',
-            size: target.linkBroken ? entryStat.size : target.targetSize,
-            modified: entryStat.mtime.toISOString(),
-            extension: entryExtension(entry.name, target.targetType, false),
-            absolutePath: entryPath,
-            ...target,
-          })
-          continue
-        }
-
-        if (entry.isDirectory()) {
-          items.push({
-            name: entry.name,
-            type: 'directory',
-            size: entryStat.size,
-            modified: entryStat.mtime.toISOString(),
-            extension: null,
-            absolutePath: entryPath,
-          })
-        } else {
-          items.push({
-            name: entry.name,
-            type: 'file',
-            size: entryStat.size,
-            modified: entryStat.mtime.toISOString(),
-            extension: getFileExtension(entry.name),
-            absolutePath: entryPath,
-          })
-        }
-      } catch {
-        // Skip entries we can't stat
-      }
-    }
-
-    items.sort((a, b) => {
-      const aIsDirectory = a.type === 'directory' || (a.type === 'symlink' && a.targetType === 'directory')
-      const bIsDirectory = b.type === 'directory' || (b.type === 'symlink' && b.targetType === 'directory')
-      if (aIsDirectory !== bIsDirectory) return aIsDirectory ? -1 : 1
-      return a.name.localeCompare(b.name)
-    })
+    const items = await readDirectoryItems(options.root, safePath.fullPath, showHidden, ignore)
 
     const response: ListResponse = {
       path: safePath.relativePath ? `/${safePath.relativePath}` : '/',
@@ -392,6 +286,70 @@ async function handleList(url: URL, options: ApiRoutesOptions): Promise<Response
       return jsonResponse({ error: 'Permission denied' }, { status: 403 })
     }
     return jsonResponse({ error: 'Internal server error' }, { status: 500 })
+  }
+}
+
+async function handleSyncManifest(url: URL, options: ApiRoutesOptions): Promise<Response> {
+  const requestPath = url.searchParams.get('path') || '/'
+  const knownRevision = url.searchParams.get('revision')
+  const safePath = resolveSafePath(options.root, requestPath)
+
+  if (!safePath) {
+    return jsonResponse({ error: 'Access denied: Invalid path' }, { status: 403 })
+  }
+
+  try {
+    const stat = await fs.stat(safePath.fullPath)
+    if (!stat.isDirectory()) {
+      return jsonResponse({ error: 'Path is not a directory' }, { status: 400 })
+    }
+
+    const rootPath = safePath.relativePath ? `/${safePath.relativePath}` : '/'
+    const ignore = createIgnoreMatcher(options.ignorePatterns)
+    const directories: SyncManifestDirectory[] = []
+    const queue = [{ path: rootPath, absolutePath: safePath.fullPath }]
+
+    for (let index = 0; index < queue.length; index++) {
+      const directory = queue[index]!
+      const items = await readDirectoryItems(options.root, directory.absolutePath, true, ignore, true)
+      directories.push({
+        ...directory,
+        items,
+      })
+
+      for (const item of items) {
+        // Match mobile pin semantics: dot-directories and symlinks are listed,
+        // but never followed (symlinks may form cycles).
+        if (item.type !== 'directory' || item.name.startsWith('.')) continue
+        queue.push({
+          path: joinServedPath(directory.path, item.name),
+          absolutePath: item.absolutePath,
+        })
+      }
+    }
+
+    const revision = createHash('sha256')
+      .update(JSON.stringify({ showHidden: options.showHidden, directories }))
+      .digest('hex')
+    const response: SyncManifestResponse = knownRevision === revision
+      ? { path: rootPath, revision, unchanged: true }
+      : {
+          path: rootPath,
+          revision,
+          unchanged: false,
+          showHidden: options.showHidden,
+          directories,
+        }
+    return jsonResponse(response)
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code
+    if (code === 'ENOENT') {
+      return jsonResponse({ error: 'Directory not found' }, { status: 404 })
+    }
+    if (code === 'EACCES' || code === 'EPERM') {
+      return jsonResponse({ error: 'Access denied' }, { status: 403 })
+    }
+    return jsonResponse({ error: 'Failed to build sync manifest' }, { status: 500 })
   }
 }
 
