@@ -64,18 +64,22 @@ export class AgentLaunchError extends Error {
   }
 }
 
-/** The Default chip, on every list: omit the flag and let the CLI decide. */
-const DEFAULT_OPTION = { id: '', label: 'Default' } as const
-
 /** Levels `claude --effort` accepts. Flat: the CLI takes the same set always. */
 const CLAUDE_EFFORT_IDS = ['low', 'medium', 'high', 'xhigh', 'max']
+
+/**
+ * Claude Code stores no effort anywhere and documents no default, so unlike
+ * Codex there is nothing to read — this is a choice, not a reading. Middle of
+ * the five, matching what every model in Codex's catalogue defaults to.
+ */
+const CLAUDE_DEFAULT_EFFORT = 'medium'
 
 type CuratedModel = { id: string; label: string }
 
 type EffortContext = {
   /** Null until the CLI's catalogue has been read at least once. */
   catalogue: EffortCatalogue | null
-  /** What an omitted model flag resolves to, so Default can be looked up too. */
+  /** Stands in for an omitted model flag, which an older client may still send. */
   defaultModel: string | null
 }
 
@@ -87,7 +91,7 @@ type AgentDefinition = {
   /** Stable install locations, checked before falling back to PATH. */
   knownBinPaths: string[]
   command: string
-  /** Curated model list. The leading empty id means "omit the model flag". */
+  /** Curated model list, joined by the CLI's own default when that is not on it. */
   models: CuratedModel[]
   /** Levels to offer for one model, from whatever the catalogue could supply. */
   resolveEfforts: (modelId: string, context: EffortContext) => AgentEffortOption[]
@@ -137,7 +141,6 @@ const AGENT_DEFINITIONS: Record<AgentId, AgentDefinition> = {
     // a shell running inside Claude Code exports it, a launchd job does not.
     env: { CLAUDE_CODE_ENTRYPOINT: 'claude-desktop' },
     models: [
-      DEFAULT_OPTION,
       { id: 'fable', label: 'Fable' },
       { id: 'opus', label: 'Opus' },
       { id: 'sonnet', label: 'Sonnet' },
@@ -149,9 +152,7 @@ const AGENT_DEFINITIONS: Record<AgentId, AgentDefinition> = {
       const parsed = JSON.parse(contents) as { model?: unknown }
       return typeof parsed.model === 'string' ? parsed.model : null
     },
-    // Claude Code keeps the session's effort out of settings.json, so there is
-    // nothing to read and Default goes uncaptioned rather than guessed at.
-    readDefaultEffort: () => null,
+    readDefaultEffort: () => CLAUDE_DEFAULT_EFFORT,
   },
   codex: {
     id: 'codex',
@@ -161,7 +162,6 @@ const AGENT_DEFINITIONS: Record<AgentId, AgentDefinition> = {
     command: 'codex',
     launchMode: 'prompt',
     models: [
-      DEFAULT_OPTION,
       { id: 'gpt-5.6-sol', label: 'gpt-5.6-sol' },
       { id: 'gpt-5.6-terra', label: 'gpt-5.6-terra' },
       { id: 'gpt-5.6-luna', label: 'gpt-5.6-luna' },
@@ -223,22 +223,27 @@ function agentEnv(definition: AgentDefinition): NodeJS.ProcessEnv {
   return { ...process.env, PATH: augmentedPath(), ...definition.env }
 }
 
+/** A malformed or missing config must not cost us the whole list. */
+function bestEffort(reader: () => string | null): string | null {
+  try {
+    return reader()
+  } catch {
+    return null
+  }
+}
+
 /**
- * Best effort: what the CLI's own config says it falls back on, so the app can
- * caption "Default" with a value instead of leaving it a mystery.
+ * What to preselect when the client has nothing remembered: the CLI's own
+ * configured choice, so a fresh install launches exactly as the CLI would.
  */
 function readDefaults(definition: AgentDefinition): {
   model: string | null
   effort: string | null
 } {
-  try {
-    const contents = readFileSync(definition.defaultModelFile, 'utf-8')
-    return {
-      model: definition.readDefaultModel(contents),
-      effort: definition.readDefaultEffort(contents),
-    }
-  } catch {
-    return { model: null, effort: null }
+  const contents = bestEffort(() => readFileSync(definition.defaultModelFile, 'utf-8')) ?? ''
+  return {
+    model: bestEffort(() => definition.readDefaultModel(contents)),
+    effort: bestEffort(() => definition.readDefaultEffort(contents)),
   }
 }
 
@@ -258,9 +263,19 @@ function describeModels(
     defaultModel,
   }
 
-  return definition.models.map((model) => ({
+  // The list is curated, but whatever the CLI is configured to use always
+  // belongs on it: that is what a launch used to get by sending no model at
+  // all, and it can be something the curated list does not name — `opus[1m]`
+  // is not `opus`. Leaving it off would quietly take a working choice away.
+  const curated = definition.models
+  const models =
+    defaultModel && !curated.some((model) => model.id === defaultModel)
+      ? [{ id: defaultModel, label: defaultModel }, ...curated]
+      : curated
+
+  return models.map((model) => ({
     ...model,
-    efforts: [DEFAULT_OPTION, ...definition.resolveEfforts(model.id, context)],
+    efforts: definition.resolveEfforts(model.id, context),
   }))
 }
 
@@ -466,21 +481,25 @@ export function validateLaunchRequest(body: unknown): ValidatedLaunchRequest {
   if (typeof resolvedModel !== 'string') {
     throw new AgentLaunchError(400, 'model must be a string')
   }
-  if (resolvedModel && !AGENT_DEFINITIONS[agent].models.some((m) => m.id === resolvedModel)) {
-    throw new AgentLaunchError(400, `Unknown model "${resolvedModel}" for ${agent}`)
-  }
-
   const resolvedEffort = effort ?? ''
   if (typeof resolvedEffort !== 'string') {
     throw new AgentLaunchError(400, 'effort must be a string')
   }
-  // Checked against the chosen model, not the agent: a level one model advertises
-  // is not one another accepts, and the CLI would only reject it later and worse.
+
+  // Both are checked against what `/api/agents` actually offered, which is wider
+  // than the curated list — it also carries the CLI's configured default. An
+  // omitted value stays legal so a client built before the picker still works.
+  const offered = describeAgent(AGENT_DEFINITIONS[agent], null)
+  if (resolvedModel && !offered.models.some((option) => option.id === resolvedModel)) {
+    throw new AgentLaunchError(400, `Unknown model "${resolvedModel}" for ${agent}`)
+  }
+  // Effort is checked against the chosen model, not the agent: a level one model
+  // advertises is not one another accepts, and the CLI would reject it later and
+  // worse. An omitted model is the configured one, so its levels are the test.
   if (resolvedEffort) {
-    const model = describeAgent(AGENT_DEFINITIONS[agent], null).models.find(
-      (option) => option.id === resolvedModel
-    )
-    if (!model?.efforts.some((option) => option.id === resolvedEffort)) {
+    const against = resolvedModel || offered.defaultModel
+    const chosen = offered.models.find((option) => option.id === against)
+    if (!chosen?.efforts.some((option) => option.id === resolvedEffort)) {
       throw new AgentLaunchError(
         400,
         `Unknown effort "${resolvedEffort}" for ${agent} ${resolvedModel || 'default model'}`

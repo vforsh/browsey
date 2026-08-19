@@ -286,7 +286,6 @@ export type GitRevertResponse = {
 export type AgentId = 'claude-code' | 'codex'
 
 export type AgentEffortOption = {
-  /** Empty string means "let the CLI pick" — the effort flag is omitted. */
   id: string
   label: string
   /** The catalogue's own one-liner for the level, when it offers one. */
@@ -294,13 +293,12 @@ export type AgentEffortOption = {
 }
 
 export type AgentModelOption = {
-  /** Empty string means "let the CLI pick" — the model flag is omitted. */
   id: string
   label: string
   /**
-   * Reasoning levels this model accepts, leading with Default. Deliberately per
-   * model rather than per agent: Codex models advertise different sets, and
-   * offering one a model does not know is a rejected launch.
+   * Reasoning levels this model accepts. Deliberately per model rather than per
+   * agent: Codex models advertise different sets, and offering one a model does
+   * not know is a rejected launch.
    */
   efforts: AgentEffortOption[]
 }
@@ -337,9 +335,12 @@ export type AgentDescriptor = {
   /** The CLI binary was found and is executable on the server. */
   installed: boolean
   models: AgentModelOption[]
-  /** Model the CLI picks when no flag is passed, read from its config. */
+  /**
+   * What to preselect when the client remembers nothing. Both lists are
+   * explicit — there is no "let the CLI decide" option — so these carry what
+   * the CLI itself is configured to use, and are always on the lists above.
+   */
   defaultModel: string | null
-  /** Reasoning level the CLI picks when no flag is passed, read from its config. */
   defaultEffort: string | null
   /** Why this agent's most recent run died, if it did. Cleared by a clean run. */
   lastFailure: AgentFailure | null
@@ -372,9 +373,12 @@ export type AgentLaunchRequest = {
   agent: AgentId
   /** Required for `prompt` agents, ignored by `session` ones. */
   prompt?: string
-  /** Must be one of the ids from the agent's curated model list. */
+  /**
+   * One of the ids `/api/agents` offered. Omitting it falls back on the CLI's
+   * own configured model, which is what clients built before the picker do.
+   */
   model?: string
-  /** Must be one of the levels the chosen model advertises. */
+  /** One of the levels the chosen model advertises. Omittable, same as above. */
   effort?: string
   target: AgentLaunchTarget
 }
