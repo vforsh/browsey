@@ -107,8 +107,9 @@ Browsey exposes a simple REST API:
 | `GET /api/git/changes?path=/` | Git file changes |
 | `GET /api/git/commit?path=/&hash=<sha>` | Git commit details, stats, navigation, and changed files (`includeAdjacent=0` skips navigation lookup) |
 | `POST /api/git/revert` | Discard changes for one git file |
-| `GET /api/agents` | Agent capabilities: which CLIs are installed and their model lists (**bearer token required**) |
-| `POST /api/agents/launch` | Launch a headless Codex / Claude Code thread (**bearer token required**) |
+| `GET /api/agents?path=/` | Agent capabilities: installed CLIs, model lists and live sessions; `path` adds the working directory a launch would resolve to (**bearer token required**) |
+| `POST /api/agents/launch` | Start a Codex thread, or open a Claude session (**bearer token required**) |
+| `POST /api/agents/stop` | End a live Claude session (**bearer token required**) |
 
 ### Response format
 
@@ -138,11 +139,17 @@ Browsey exposes a simple REST API:
 
 ## Agent threads
 
-Browsey can launch a headless [Codex](https://developers.openai.com/codex/cli) or
-[Claude Code](https://docs.claude.com/en/docs/claude-code) run from a paired mobile app.
-It is fire-and-forget: Browsey spawns a detached process and answers immediately. Results
-live in the CLIs' own session stores — pick them up later on the Mac with
-`claude --resume <session-id>` or `codex resume`.
+Browsey can put an agent to work on this machine from a paired mobile app. The two agents
+behave differently, because the apps you pick the work up in do.
+
+- **[Codex](https://developers.openai.com/codex/cli)** takes a prompt together with the
+  folder, file or excerpt you launched from, runs it, and is forgotten. Browsey answers as
+  soon as the thread exists; the result is waiting for you in the Codex app, or under
+  `codex resume`.
+- **[Claude Code](https://docs.claude.com/en/docs/claude-code)** takes no prompt at all. It
+  opens a live Remote Control session in a directory and answers with a link that opens
+  *that* session in the Claude phone app, which is where the conversation then happens. The
+  session stays up until you stop it, and survives a browsey restart.
 
 Agent endpoints are **enabled by default** and always require a bearer token.
 
@@ -155,22 +162,28 @@ browsey start --no-agents # or turn the endpoints off entirely
   across restarts. `--agents-token` overrides it for one run without persisting.
 - **Not gated by `readonly`**: `--no-readonly` protects Browsey's *own* file mutations.
   Agents have their own opt-in (`--no-agents`) plus the token, so the two are independent.
-- **Full access**: Claude runs as `claude -p --dangerously-skip-permissions`; Codex is driven
-  over the app-server protocol with `sandbox: danger-full-access` and `approvalPolicy: never`
-  — equivalent to `--dangerously-bypass-approvals-and-sandbox`, and recorded in a way the
-  Codex apps list. Anyone holding the token can run
-  arbitrary code on the machine — treat it like an SSH key.
+- **Full access**: Claude sessions run with `--permission-mode bypassPermissions`; Codex is
+  driven over the app-server protocol with `sandbox: danger-full-access` and
+  `approvalPolicy: never` — equivalent to `--dangerously-bypass-approvals-and-sandbox`, and
+  recorded in a way the Codex apps list. Anyone holding the token can run arbitrary code on
+  the machine — treat it like an SSH key.
 - **cwd**: resolved to the nearest agent project already known to the CLI, else the git
   root, else the target folder — so threads land in real projects and reuse their history.
+- **Live sessions**: `GET /api/agents` lists the Claude ones, read from Claude's own state
+  directory and filtered by whether the process is still alive — so a session started before
+  the last browsey restart is still listed and still stoppable. `POST /api/agents/stop` ends
+  one by `sessionId`.
 - **Logs**: stdout/stderr of each run goes to `~/.browsey/agent-runs/<timestamp>-<agent>.log`
   (debugging only, no rotation yet).
-- **Failures**: a launch answers before the run finishes, so if a thread dies afterwards
-  the reason is remembered and reported as `lastFailure` on the next `GET /api/agents` —
-  which is how the app can tell you "your Claude login expired" instead of silently
-  producing threads that never ran.
+- **Failures**: a Codex launch answers before the run finishes, so if that thread dies
+  afterwards the reason is remembered and reported as `lastFailure` on the next
+  `GET /api/agents` — which is how the app can tell you "your login expired" instead of
+  silently producing threads that never ran. A Claude session is different: it either
+  registers within a second or the launch fails outright.
 - **Binary resolution**: `BROWSEY_CLAUDE_BIN` / `BROWSEY_CODEX_BIN`, then `~/.local/bin/claude`
   and `/opt/homebrew/bin/codex`, then `PATH` (augmented with those two directories, which
-  matters for the launchd-managed instance).
+  matters for the launchd-managed instance). Claude additionally needs a controlling
+  terminal, which comes from `script(1)` — no native pty module is involved.
 
 ## Development
 
