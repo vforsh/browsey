@@ -1,11 +1,21 @@
 import { spawn } from 'child_process'
-import { accessSync, closeSync, constants, mkdirSync, openSync, readFileSync } from 'fs'
+import {
+  accessSync,
+  closeSync,
+  constants,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  readSync,
+  statSync,
+} from 'fs'
 import { homedir } from 'os'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'path'
 import { randomUUID } from 'crypto'
 import { findGitRoot } from './git.js'
 import type {
   AgentDescriptor,
+  AgentFailure,
   AgentCapabilitiesResponse,
   AgentId,
   AgentLaunchRequest,
@@ -20,8 +30,17 @@ export const MAX_SELECTION_LENGTH = 32 * 1024
 /** Spawn is reported as successful once no `error` event arrives within this window. */
 const SPAWN_GRACE_MS = 200
 
+/** Bytes of the run log read back to explain a fast failure. */
+const LOG_TAIL_BYTES = 2_000
+
 /** Extra PATH entries — the launchd-managed instance inherits a bare PATH. */
 const EXTRA_PATH_ENTRIES = ['/opt/homebrew/bin', join(homedir(), '.local/bin')]
+
+/**
+ * Last non-zero exit per agent, in memory only — it describes the machine's
+ * current state (logged out, out of quota), so losing it on restart is fine.
+ */
+const lastFailures = new Map<AgentId, AgentFailure>()
 
 export class AgentLaunchError extends Error {
   constructor(
@@ -146,6 +165,7 @@ function describeAgent(definition: AgentDefinition): AgentDescriptor {
     installed: resolveAgentBinary(definition.id) !== null,
     models: definition.models,
     defaultModel: resolveDefaultModel(definition),
+    lastFailure: lastFailures.get(definition.id) ?? null,
   }
 }
 
@@ -366,11 +386,33 @@ function buildArgv(
 }
 
 /** Sole purpose is debugging failed runs; stdout is otherwise discarded. */
-function openRunLog(agent: AgentId): number {
+function openRunLog(agent: AgentId): { fd: number; path: string } {
   const directory = join(homedir(), '.browsey', 'agent-runs')
   mkdirSync(directory, { recursive: true })
   const stamp = new Date().toISOString().replace(/[:.]/g, '-')
-  return openSync(join(directory, `${stamp}-${agent}.log`), 'a')
+  const path = join(directory, `${stamp}-${agent}.log`)
+  return { fd: openSync(path, 'a'), path }
+}
+
+/** Last meaningful line the agent printed, used as the client-facing reason. */
+function readFailureReason(logPath: string): string | null {
+  try {
+    const { size } = statSync(logPath)
+    if (size === 0) return null
+
+    const start = Math.max(0, size - LOG_TAIL_BYTES)
+    const fd = openSync(logPath, 'r')
+    try {
+      const buffer = Buffer.alloc(size - start)
+      readSync(fd, buffer, 0, buffer.length, start)
+      const lines = buffer.toString('utf-8').split('\n').map((line) => line.trim())
+      return lines.filter(Boolean).pop() ?? null
+    } finally {
+      closeSync(fd)
+    }
+  } catch {
+    return null
+  }
 }
 
 export type SpawnedThread = {
@@ -401,7 +443,8 @@ export async function spawnAgentThread({
   // even though stdout is discarded. Codex has no equivalent flag.
   const sessionId = agent === 'claude-code' ? randomUUID() : null
   const argv = buildArgv(agent, binary, finalPrompt, model, sessionId)
-  const logFd = openRunLog(agent)
+  const { fd: logFd, path: logPath } = openRunLog(agent)
+  const command = AGENT_DEFINITIONS[agent].command
 
   try {
     const child = spawn(argv[0]!, argv.slice(1), {
@@ -409,6 +452,23 @@ export async function spawnAgentThread({
       detached: true,
       stdio: ['ignore', logFd, logFd],
       env: { ...process.env, PATH: augmentedPath() },
+    })
+
+    // The launch stays fire-and-forget, but the outcome is not thrown away:
+    // whatever the run reports on the way out is remembered for the next
+    // capabilities call, so a stale login shows up where the agent is chosen
+    // instead of silently producing threads that never ran.
+    child.once('exit', (code) => {
+      if (code === 0) {
+        lastFailures.delete(agent)
+        return
+      }
+      lastFailures.set(agent, {
+        at: new Date().toISOString(),
+        reason:
+          readFailureReason(logPath) ??
+          `${command} exited with code ${code ?? 'unknown'}`,
+      })
     })
 
     await new Promise<void>((resolveSpawn, rejectSpawn) => {
@@ -426,8 +486,9 @@ export async function spawnAgentThread({
     child.unref()
     return sessionId ? { sessionId } : {}
   } catch (error) {
+    if (error instanceof AgentLaunchError) throw error
     const message = error instanceof Error ? error.message : String(error)
-    throw new AgentLaunchError(500, `Failed to start ${agent}: ${message}`)
+    throw new AgentLaunchError(500, `Failed to start ${command}: ${message}`)
   } finally {
     closeSync(logFd)
   }

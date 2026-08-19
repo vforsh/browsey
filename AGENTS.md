@@ -174,6 +174,12 @@ Browsey spawns a detached process and responds immediately; results are picked u
   Do **not** default to an interactive shell's `which claude` — it points into a volatile fnm
   multishell dir. The augmented PATH is also passed to the child, which matters because the
   `:4200` instance is launchd-managed with a bare PATH.
+- **Launch stays fire-and-forget, but not blind.** The response returns as soon as
+  `spawn` succeeds, so a run that dies seconds later (stale login, exhausted quota)
+  cannot be reported in that reply. Instead a lingering `exit` listener records the
+  last non-zero exit per agent in `lastFailures`, and `GET /api/agents` reports it as
+  `lastFailure` so the app can warn where the agent is chosen. A clean exit clears it.
+  In memory only — it describes machine state, so losing it on restart is correct.
 - **Model lists** are curated constants in `agents.ts`; the `Default` label is enriched from
   `~/.claude/settings.json` / `~/.codex/config.toml`. Updating models needs no app release.
 

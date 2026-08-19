@@ -162,6 +162,10 @@ browsey start --no-agents # or turn the endpoints off entirely
   root, else the target folder — so threads land in real projects and reuse their history.
 - **Logs**: stdout/stderr of each run goes to `~/.browsey/agent-runs/<timestamp>-<agent>.log`
   (debugging only, no rotation yet).
+- **Failures**: a launch answers before the run finishes, so if a thread dies afterwards
+  the reason is remembered and reported as `lastFailure` on the next `GET /api/agents` —
+  which is how the app can tell you "your Claude login expired" instead of silently
+  producing threads that never ran.
 - **Binary resolution**: `BROWSEY_CLAUDE_BIN` / `BROWSEY_CODEX_BIN`, then `~/.local/bin/claude`
   and `/opt/homebrew/bin/codex`, then `PATH` (augmented with those two directories, which
   matters for the launchd-managed instance).

@@ -291,6 +291,13 @@ export type AgentModelOption = {
   label: string
 }
 
+export type AgentFailure = {
+  /** ISO timestamp of the failed run. */
+  at: string
+  /** Last line the agent printed before exiting non-zero. */
+  reason: string
+}
+
 export type AgentDescriptor = {
   id: AgentId
   name: string
@@ -299,6 +306,8 @@ export type AgentDescriptor = {
   models: AgentModelOption[]
   /** Model the CLI picks when no flag is passed, read from its config. */
   defaultModel: string | null
+  /** Why this agent's most recent run died, if it did. Cleared by a clean run. */
+  lastFailure: AgentFailure | null
 }
 
 export type AgentCapabilitiesResponse = {
