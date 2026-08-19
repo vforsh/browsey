@@ -155,8 +155,10 @@ browsey start --no-agents # or turn the endpoints off entirely
   across restarts. `--agents-token` overrides it for one run without persisting.
 - **Not gated by `readonly`**: `--no-readonly` protects Browsey's *own* file mutations.
   Agents have their own opt-in (`--no-agents`) plus the token, so the two are independent.
-- **Full access**: threads run as `codex exec --dangerously-bypass-approvals-and-sandbox`
-  and `claude -p --dangerously-skip-permissions`. Anyone holding the token can run
+- **Full access**: Claude runs as `claude -p --dangerously-skip-permissions`; Codex is
+  driven over the app-server protocol with `sandbox: danger-full-access` and
+  `approvalPolicy: never` — equivalent to `--dangerously-bypass-approvals-and-sandbox`,
+  but recorded in a way the Codex Desktop app will actually list. Anyone holding the token can run
   arbitrary code on the machine — treat it like an SSH key.
 - **cwd**: resolved to the nearest agent project already known to the CLI, else the git
   root, else the target folder — so threads land in real projects and reuse their history.

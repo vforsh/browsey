@@ -166,8 +166,11 @@ Browsey spawns a detached process and responds immediately; results are picked u
   and `/` plus `$HOME` are blacklisted as a second belt.
 - **Never mutate agent configs** from the server. Fresh projects materialize naturally on the
   agent side on first run.
-- **Spawning** follows the `git.ts` discipline — argv arrays, never a shell — but detached and
-  unref'd, with stdout/stderr to `~/.browsey/agent-runs/<timestamp>-<agent>.log`. Prompts are
+- **Spawning** follows the `git.ts` discipline — argv arrays, never a shell — with
+  stdout/stderr to `~/.browsey/agent-runs/<timestamp>-<agent>.log`. Claude is fully
+  detached and survives a browsey restart. Codex is driven over stdio JSON-RPC, so its
+  turn is tied to this process: a restart mid-run aborts it. That is the accepted cost of
+  being visible in Codex Desktop at all. Prompts are
   capped (100k chars) and selections (32 KB) to stay well inside `ARG_MAX`.
 - **Binary resolution**: `BROWSEY_CLAUDE_BIN` / `BROWSEY_CODEX_BIN`, then `~/.local/bin/claude`
   and `/opt/homebrew/bin/codex`, then `Bun.which` against a PATH augmented with those dirs.
@@ -180,18 +183,24 @@ Browsey spawns a detached process and responds immediately; results are picked u
   last non-zero exit per agent in `lastFailures`, and `GET /api/agents` reports it as
   `lastFailure` so the app can warn where the agent is chosen. A clean exit clears it.
   In memory only — it describes machine state, so losing it on restart is correct.
-- **Desktop-app visibility differs per agent, and this is settled — do not re-investigate.**
-  Claude Code's desktop app reads the same on-disk transcript store the CLI writes and
-  filters on the session's recorded surface, so `CLAUDE_CODE_ENTRYPOINT=claude-desktop`
-  is forced on every Claude run and threads show up there. Codex Desktop (which lives
-  inside `ChatGPT.app`) does **not** read from disk — it keeps its own thread index in
-  `~/.codex/.codex-global-state.json`, populated only by threads created in its own UI.
-  Measured across 3697 local sessions: of 13 originators, only `Codex Desktop` appears in
-  that index (363 of them); `codex_cli_rs`, `codex_exec`, `codex_vscode` and even
-  OpenAI's own `codex_chatgpt_ios_remote` are all at zero. No flag, env var, originator
-  override or app-server route changes this, so Codex threads are terminal-resumable
-  (`codex resume`) by design — same as any thread started by typing `codex`. Never write
-  into the desktop app's private state to fake it.
+- **Desktop-app visibility is why each agent is launched differently.** Both desktop
+  apps filter on how a session was produced, and neither shows a plain headless run.
+  - *Claude Code* reads the same on-disk transcripts the CLI writes and filters on the
+    recorded surface, so `CLAUDE_CODE_ENTRYPOINT=claude-desktop` is forced on every run.
+    A bare `-p` run records `sdk-cli` and stays invisible.
+  - *Codex Desktop* (inside `ChatGPT.app`) filters on the session's `source`. `codex exec`
+    records `source: exec`, which it treats as automation and never lists — no flag,
+    env var or originator override changes that (`CODEX_INTERNAL_ORIGINATOR_OVERRIDE`
+    moves `originator` only, and `source` is set structurally by the subcommand). So
+    Codex threads are created over the **app-server protocol** instead
+    (`codex-app-server.ts`), which records `source: vscode` — the same value as the
+    Desktop app's own threads — and `originator: browsey` from our `clientInfo`.
+  - Codex Desktop still will not *refresh* its list for a thread created by another
+    process; it shows up after the app restarts, or immediately if something opens
+    `codex://threads/<id>`. We deliberately do **not** fire that deep link: it drags the
+    Desktop app to the foreground on every launch (`open -g` does not avoid this), which
+    is the wrong trade for a phone-triggered background job.
+  - Do not write into either desktop app's private state to fake visibility.
 - **Model lists** are curated constants in `agents.ts`; the `Default` label is enriched from
   `~/.claude/settings.json` / `~/.codex/config.toml`. Updating models needs no app release.
 
