@@ -30,9 +30,12 @@ const CLIENT_NAME = 'browsey'
 type JsonRpcMessage = {
   id?: number
   method?: string
+  params?: unknown
   result?: unknown
   error?: { message?: string }
 }
+
+export type NotificationHandler = (params: unknown) => void
 
 export type StartedCodexThread = {
   threadId: string
@@ -49,19 +52,19 @@ export class CodexAppServerError extends Error {}
  */
 function createReader(
   stdout: NonNullable<ReturnType<typeof spawn>['stdout']>,
-  logFd: number
+  logFd: number | null
 ) {
   /** Responses that arrived before anyone awaited them. */
   const unclaimed = new Map<number, JsonRpcMessage>()
   const waiting = new Map<number, (message: JsonRpcMessage) => void>()
-  const notificationHandlers = new Map<string, () => void>()
+  const notificationHandlers = new Map<string, NotificationHandler>()
   let buffer = ''
 
   const deliver = (message: JsonRpcMessage) => {
     // Notifications are dispatched and dropped, so a long run cannot accumulate
     // them; responses wait to be claimed by id.
     if (message.id === undefined) {
-      if (message.method) notificationHandlers.get(message.method)?.()
+      if (message.method) notificationHandlers.get(message.method)?.(message.params)
       return
     }
     const waiter = waiting.get(message.id)
@@ -75,7 +78,7 @@ function createReader(
 
   stdout.on('data', (chunk: Buffer) => {
     try {
-      writeSync(logFd, chunk)
+      if (logFd !== null) writeSync(logFd, chunk)
     } catch {
       // The log is a debugging aid; losing it must not kill the run.
     }
@@ -111,7 +114,7 @@ function createReader(
         })
       })
     },
-    onNotification(method: string, handler: () => void) {
+    onNotification(method: string, handler: NotificationHandler) {
       notificationHandlers.set(method, handler)
     },
   }
@@ -127,25 +130,98 @@ function resultOf(message: JsonRpcMessage, what: string): Record<string, unknown
   return message.result as Record<string, unknown>
 }
 
+export type CodexAppServer = {
+  child: ReturnType<typeof spawn>
+  request(
+    method: string,
+    params: Record<string, unknown>,
+    timeoutMs: number
+  ): Promise<Record<string, unknown>>
+  onNotification(method: string, handler: NotificationHandler): void
+  /** Lets the server shut itself down cleanly once its work is done. */
+  endStdin(): void
+}
+
+/**
+ * Spawns an app server and gets it through the handshake, so callers only deal
+ * in requests. `logFd` doubles as the child's stderr; pass null to discard both
+ * it and the stdout mirror — a run log that matters is one nobody else writes to.
+ */
+export async function openAppServer({
+  binary,
+  cwd,
+  logFd,
+  env,
+  detached,
+}: {
+  binary: string
+  cwd: string
+  logFd: number | null
+  env: NodeJS.ProcessEnv
+  detached: boolean
+}): Promise<CodexAppServer> {
+  const child = spawn(binary, ['app-server'], {
+    cwd,
+    detached,
+    stdio: ['pipe', 'pipe', logFd ?? 'ignore'],
+    env,
+  })
+
+  if (!child.stdin || !child.stdout) {
+    throw new CodexAppServerError('codex app-server gave no stdio pipes')
+  }
+
+  const stdin = child.stdin
+  const { awaitResponse, onNotification } = createReader(child.stdout, logFd)
+
+  let nextId = 0
+  const send = (message: Record<string, unknown>) => {
+    stdin.write(`${JSON.stringify(message)}\n`)
+  }
+  const request = async (
+    method: string,
+    params: Record<string, unknown>,
+    timeoutMs: number
+  ): Promise<Record<string, unknown>> => {
+    const id = ++nextId
+    send({ jsonrpc: '2.0', id, method, params })
+    return resultOf(await awaitResponse(id, timeoutMs), method)
+  }
+
+  await request(
+    'initialize',
+    { clientInfo: { name: CLIENT_NAME, title: 'Browsey', version: '1' } },
+    INITIALIZE_TIMEOUT_MS
+  )
+  send({ jsonrpc: '2.0', method: 'initialized', params: {} })
+
+  return {
+    child,
+    request,
+    onNotification,
+    endStdin() {
+      try {
+        stdin.end()
+      } catch {
+        // Already gone; the caller's exit handling still runs.
+      }
+    },
+  }
+}
+
 /**
  * Ends the app server once the turn is done. Killing it early truncates the
  * thread — it keeps the user's message and loses the answer — and never closing
  * it leaks one process per launch, so both the notification and a stop-loss
  * timer lead to the same clean stdin close.
  */
-function endOnTurnCompletion(
-  child: ReturnType<typeof spawn>,
-  onNotification: (method: string, handler: () => void) => void
-) {
+function endOnTurnCompletion(server: CodexAppServer) {
+  const { child, onNotification } = server
   let closed = false
   const closeStdin = () => {
     if (closed) return
     closed = true
-    try {
-      child.stdin?.end()
-    } catch {
-      // Already gone; the exit handler still runs.
-    }
+    server.endStdin()
   }
 
   const stopLoss = setTimeout(closeStdin, TURN_ABANDON_MS)
@@ -173,43 +249,8 @@ export async function startCodexThread({
   logFd: number
   env: NodeJS.ProcessEnv
 }): Promise<StartedCodexThread> {
-  const child = spawn(binary, ['app-server'], {
-    cwd,
-    detached: true,
-    stdio: ['pipe', 'pipe', logFd],
-    env,
-  })
-
-  if (!child.stdin || !child.stdout) {
-    throw new CodexAppServerError('codex app-server gave no stdio pipes')
-  }
-
-  const stdin = child.stdin
-  const { awaitResponse, onNotification } = createReader(child.stdout, logFd)
-
-  let nextId = 0
-  const send = (message: Record<string, unknown>) => {
-    stdin.write(`${JSON.stringify(message)}\n`)
-  }
-  const notify = (method: string, params: Record<string, unknown>) => {
-    send({ jsonrpc: '2.0', method, params })
-  }
-  const request = async (
-    method: string,
-    params: Record<string, unknown>,
-    timeoutMs: number
-  ): Promise<Record<string, unknown>> => {
-    const id = ++nextId
-    send({ jsonrpc: '2.0', id, method, params })
-    return resultOf(await awaitResponse(id, timeoutMs), method)
-  }
-
-  await request(
-    'initialize',
-    { clientInfo: { name: CLIENT_NAME, title: 'Browsey', version: '1' } },
-    INITIALIZE_TIMEOUT_MS
-  )
-  notify('initialized', {})
+  const server = await openAppServer({ binary, cwd, logFd, env, detached: true })
+  const { child, request } = server
 
   const started = await request(
     'thread/start',
@@ -233,13 +274,9 @@ export async function startCodexThread({
     throw new CodexAppServerError('codex started a thread without an id')
   }
 
-  await request(
-    'turn/start',
-    { threadId, input: [{ type: 'text', text: prompt }] },
-    THREAD_TIMEOUT_MS
-  )
+  await request('turn/start', { threadId, input: [{ type: 'text', text: prompt }] }, THREAD_TIMEOUT_MS)
 
-  endOnTurnCompletion(child, onNotification)
+  endOnTurnCompletion(server)
 
   return { threadId, child }
 }
