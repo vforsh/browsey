@@ -120,6 +120,16 @@ const AGENT_DEFINITIONS: Record<AgentId, AgentDefinition> = {
   },
 }
 
+/**
+ * Agents withheld from the picker. Temporary: Claude threads launched headlessly
+ * do not appear in the Claude iOS app's Code section — that list only holds live
+ * remote-control sessions — so the option is hidden rather than offered and then
+ * not found on the phone. Claude threads still show up in Claude Code on the Mac,
+ * so nothing else about the integration is broken. See
+ * ../browsey-expo/docs/agent-thread-visibility.md; re-enable by emptying this set.
+ */
+const DISABLED_AGENTS = new Set<AgentId>(['claude-code'])
+
 export function isAgentId(value: unknown): value is AgentId {
   return value === 'claude-code' || value === 'codex'
 }
@@ -178,10 +188,11 @@ function describeAgent(definition: AgentDefinition): AgentDescriptor {
 }
 
 export function getAgentCapabilities(): AgentCapabilitiesResponse {
-  return {
-    enabled: true,
-    agents: [describeAgent(AGENT_DEFINITIONS['claude-code']), describeAgent(AGENT_DEFINITIONS.codex)],
-  }
+  const agents = (['claude-code', 'codex'] as const)
+    .filter((id) => !DISABLED_AGENTS.has(id))
+    .map((id) => describeAgent(AGENT_DEFINITIONS[id]))
+
+  return { enabled: true, agents }
 }
 
 function normalizeDir(path: string): string {
@@ -323,6 +334,11 @@ export function validateLaunchRequest(body: unknown): ValidatedLaunchRequest {
 
   if (!isAgentId(agent)) {
     throw new AgentLaunchError(400, 'Unknown agent')
+  }
+  // A client holding a cached capabilities list must not be able to launch a
+  // withheld agent.
+  if (DISABLED_AGENTS.has(agent)) {
+    throw new AgentLaunchError(422, `${AGENT_DEFINITIONS[agent].name} is currently disabled`)
   }
   if (typeof prompt !== 'string' || prompt.trim().length === 0) {
     throw new AgentLaunchError(400, 'prompt is required')

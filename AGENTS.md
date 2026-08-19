@@ -148,6 +148,11 @@ browsey pair [target]                 # --url <url>, --name <name>
 
 ### Agent Threads
 
+Full research on which surfaces list these threads and why lives in
+`../browsey-expo/docs/agent-thread-visibility.md` — read it before re-investigating any of
+it. **Claude is currently withheld from the picker** via `DISABLED_AGENTS` in `agents.ts`
+(its threads never reach the Claude iOS app); emptying that set restores it.
+
 `/api/agents/*` launches headless Codex / Claude Code runs on this machine. Fire-and-forget:
 Browsey spawns a detached process and responds immediately; results are picked up later via
 `claude --resume <session-id>` / `codex resume`.
