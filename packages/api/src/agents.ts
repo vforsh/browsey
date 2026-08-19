@@ -65,6 +65,8 @@ type AgentDefinition = {
   /** Config file read (best effort) to label the default model. */
   defaultModelFile: string
   readDefaultModel: (contents: string) => string | null
+  /** Env forced on every run of this agent, overriding anything inherited. */
+  env?: Record<string, string>
 }
 
 const AGENT_DEFINITIONS: Record<AgentId, AgentDefinition> = {
@@ -74,6 +76,11 @@ const AGENT_DEFINITIONS: Record<AgentId, AgentDefinition> = {
     binEnvVar: 'BROWSEY_CLAUDE_BIN',
     knownBinPaths: [join(homedir(), '.local/bin/claude')],
     command: 'claude',
+    // Claude Code tags each session with the surface it came from, and the
+    // desktop app only lists sessions tagged `claude-desktop` — a bare `-p`
+    // run records `sdk-cli` and stays invisible there. Setting it explicitly
+    // also stops the value depending on whatever env browsey was started with.
+    env: { CLAUDE_CODE_ENTRYPOINT: 'claude-desktop' },
     models: [
       { id: '', label: 'Default' },
       { id: 'fable', label: 'Fable' },
@@ -451,7 +458,11 @@ export async function spawnAgentThread({
       cwd,
       detached: true,
       stdio: ['ignore', logFd, logFd],
-      env: { ...process.env, PATH: augmentedPath() },
+      env: {
+        ...process.env,
+        PATH: augmentedPath(),
+        ...AGENT_DEFINITIONS[agent].env,
+      },
     })
 
     // The launch stays fire-and-forget, but the outcome is not thrown away:
