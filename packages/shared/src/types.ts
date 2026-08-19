@@ -298,6 +298,25 @@ export type AgentFailure = {
   reason: string
 }
 
+/**
+ * `prompt` composes a one-shot thread from a prompt and its file context.
+ * `session` opens a live session in a directory and hands it over — there is
+ * nothing to compose, so clients must not ask for a prompt.
+ */
+export type AgentLaunchMode = 'prompt' | 'session'
+
+/** A live session an agent is currently holding open. */
+export type AgentSession = {
+  sessionId: string
+  /** The agent process, so a stop request does not depend on server bookkeeping. */
+  pid: number
+  cwd: string
+  status: string | null
+  startedAt: number | null
+  /** Opens this exact session in the agent's phone app, when it has one. */
+  url: string | null
+}
+
 export type AgentDescriptor = {
   id: AgentId
   name: string
@@ -308,6 +327,14 @@ export type AgentDescriptor = {
   defaultModel: string | null
   /** Why this agent's most recent run died, if it did. Cleared by a clean run. */
   lastFailure: AgentFailure | null
+  launchMode: AgentLaunchMode
+  /** Live sessions. Always empty for `prompt` agents, which keep none. */
+  sessions: AgentSession[]
+  /**
+   * Where a launch for the `path` asked about would land, so the client can tell
+   * whether a session is already open there. Null when no path was requested.
+   */
+  targetCwd: string | null
 }
 
 export type AgentCapabilitiesResponse = {
@@ -327,7 +354,8 @@ export type AgentLaunchTarget = {
 
 export type AgentLaunchRequest = {
   agent: AgentId
-  prompt: string
+  /** Required for `prompt` agents, ignored by `session` ones. */
+  prompt?: string
   /** Must be one of the ids from the agent's curated model list. */
   model?: string
   target: AgentLaunchTarget
@@ -340,6 +368,16 @@ export type AgentLaunchResponse = {
   cwd: string
   /** The cwd matched a project the agent already knows about. */
   reusedProject: boolean
-  /** Claude Code only — the minted id for `claude --resume <id>`. */
+  /** Claude: the live session's id. Codex: the app-server thread id. */
   sessionId?: string
+  /** Where to pick the thread up on the phone, when the agent offers such a link. */
+  url?: string
+}
+
+export type AgentStopRequest = {
+  sessionId: string
+}
+
+export type AgentStopResponse = {
+  stopped: boolean
 }

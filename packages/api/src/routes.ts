@@ -22,7 +22,9 @@ import {
   spawnAgentThread,
   validateLaunchRequest,
 } from './agents.js'
-import type { ApiRoutesOptions, FileItem, ListResponse, SyncManifestDirectory, SyncManifestResponse, SearchResult, SearchResponse, GitStatusResponse, GitLogResponse, GitCommitResponse, GitCommitFile, GitChangesResponse, GitRevertResponse, HealthResponse, ViewResponse, SaveTextResponse, AgentLaunchResponse } from '@vforsh/browsey-shared'
+import type { CapabilitiesTarget } from './agents.js'
+import { stopClaudeSession } from './claude-remote-control.js'
+import type { ApiRoutesOptions, FileItem, ListResponse, SyncManifestDirectory, SyncManifestResponse, SearchResult, SearchResponse, GitStatusResponse, GitLogResponse, GitCommitResponse, GitCommitFile, GitChangesResponse, GitRevertResponse, HealthResponse, ViewResponse, SaveTextResponse, AgentLaunchResponse, AgentStopRequest, AgentStopResponse } from '@vforsh/browsey-shared'
 
 const JSON_HEADERS = {
   'Content-Type': 'application/json',
@@ -286,13 +288,61 @@ async function handleAgentRoute(
   }
 
   if (route === '/agents' && req.method === 'GET') {
-    return jsonResponse(getAgentCapabilities())
+    return handleAgentCapabilities(req, options)
   }
   if (route === '/agents/launch' && req.method === 'POST') {
     return handleAgentLaunch(req, options)
   }
+  if (route === '/agents/stop' && req.method === 'POST') {
+    return handleAgentStop(req)
+  }
 
   return jsonResponse({ error: 'Not found' }, { status: 404 })
+}
+
+/**
+ * `path` is optional and only sharpens the answer: given one, every agent also
+ * reports the cwd a launch would land in, which is what lets the client notice
+ * that a session is already open there. An unusable path is ignored rather than
+ * rejected — the capabilities list is still worth returning.
+ */
+async function handleAgentCapabilities(
+  req: Request,
+  options: ApiRoutesOptions
+): Promise<Response> {
+  const requestPath = new URL(req.url).searchParams.get('path')
+  let target: CapabilitiesTarget | undefined
+
+  if (requestPath) {
+    const safePath = resolveSafePath(options.root, requestPath)
+    if (safePath) {
+      try {
+        const stat = await fs.stat(safePath.fullPath)
+        target = { absPath: safePath.fullPath, isDirectory: stat.isDirectory() }
+      } catch {
+        // Path vanished between listing and asking; answer without it.
+      }
+    }
+  }
+
+  return jsonResponse(await getAgentCapabilities(target))
+}
+
+async function handleAgentStop(req: Request): Promise<Response> {
+  let body: unknown
+  try {
+    body = await req.json()
+  } catch {
+    return jsonResponse({ error: 'Invalid JSON body' }, { status: 400 })
+  }
+
+  const { sessionId } = (body ?? {}) as Partial<AgentStopRequest>
+  if (typeof sessionId !== 'string' || sessionId.length === 0) {
+    return jsonResponse({ error: 'sessionId is required' }, { status: 400 })
+  }
+
+  const response: AgentStopResponse = { stopped: stopClaudeSession(sessionId) }
+  return jsonResponse(response)
 }
 
 async function handleAgentLaunch(req: Request, options: ApiRoutesOptions): Promise<Response> {
@@ -335,7 +385,7 @@ async function handleAgentLaunch(req: Request, options: ApiRoutesOptions): Promi
       selection: target.selection,
     })
 
-    const { sessionId } = await spawnAgentThread({ agent, cwd, finalPrompt, model })
+    const { sessionId, url } = await spawnAgentThread({ agent, cwd, finalPrompt, model })
 
     const response: AgentLaunchResponse = {
       launched: true,
@@ -343,6 +393,7 @@ async function handleAgentLaunch(req: Request, options: ApiRoutesOptions): Promi
       cwd,
       reusedProject: reused,
       ...(sessionId ? { sessionId } : {}),
+      ...(url ? { url } : {}),
     }
     return jsonResponse(response)
   } catch (error) {

@@ -11,11 +11,17 @@ import {
 } from 'fs'
 import { homedir } from 'os'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'path'
-import { randomUUID } from 'crypto'
 import { findGitRoot } from './git.js'
 import { CodexAppServerError, startCodexThread } from './codex-app-server.js'
+import {
+  ClaudeRemoteControlError,
+  listClaudeSessions,
+  startClaudeSession,
+} from './claude-remote-control.js'
 import type {
   AgentDescriptor,
+  AgentLaunchMode,
+  AgentSession,
   AgentFailure,
   AgentCapabilitiesResponse,
   AgentId,
@@ -27,9 +33,6 @@ import type {
 
 export const MAX_PROMPT_LENGTH = 100_000
 export const MAX_SELECTION_LENGTH = 32 * 1024
-
-/** Spawn is reported as successful once no `error` event arrives within this window. */
-const SPAWN_GRACE_MS = 200
 
 /** Bytes of the run log read back to explain a fast failure. */
 const LOG_TAIL_BYTES = 2_000
@@ -68,6 +71,9 @@ type AgentDefinition = {
   readDefaultModel: (contents: string) => string | null
   /** Env forced on every run of this agent, overriding anything inherited. */
   env?: Record<string, string>
+  launchMode: AgentLaunchMode
+  /** Only `session` agents have anything to list. */
+  listSessions?: () => AgentSession[]
 }
 
 const AGENT_DEFINITIONS: Record<AgentId, AgentDefinition> = {
@@ -77,10 +83,14 @@ const AGENT_DEFINITIONS: Record<AgentId, AgentDefinition> = {
     binEnvVar: 'BROWSEY_CLAUDE_BIN',
     knownBinPaths: [join(homedir(), '.local/bin/claude')],
     command: 'claude',
+    // Claude opens a live Remote Control session rather than composing a thread:
+    // the phone app's Code section lists live sessions and nothing else.
+    launchMode: 'session',
+    listSessions: listClaudeSessions,
     // Claude Code tags each session with the surface it came from, and the
-    // desktop app only lists sessions tagged `claude-desktop` — a bare `-p`
-    // run records `sdk-cli` and stays invisible there. Setting it explicitly
-    // also stops the value depending on whatever env browsey was started with.
+    // desktop app only lists sessions tagged `claude-desktop`. Forcing it stops
+    // the value depending on whatever env browsey happened to be started with —
+    // a shell running inside Claude Code exports it, a launchd job does not.
     env: { CLAUDE_CODE_ENTRYPOINT: 'claude-desktop' },
     models: [
       { id: '', label: 'Default' },
@@ -100,6 +110,7 @@ const AGENT_DEFINITIONS: Record<AgentId, AgentDefinition> = {
     binEnvVar: 'BROWSEY_CODEX_BIN',
     knownBinPaths: ['/opt/homebrew/bin/codex'],
     command: 'codex',
+    launchMode: 'prompt',
     models: [
       { id: '', label: 'Default' },
       { id: 'gpt-5.6-sol', label: 'gpt-5.6-sol' },
@@ -119,16 +130,6 @@ const AGENT_DEFINITIONS: Record<AgentId, AgentDefinition> = {
     },
   },
 }
-
-/**
- * Agents withheld from the picker. Temporary: Claude threads launched headlessly
- * do not appear in the Claude iOS app's Code section — that list only holds live
- * remote-control sessions — so the option is hidden rather than offered and then
- * not found on the phone. Claude threads still show up in Claude Code on the Mac,
- * so nothing else about the integration is broken. See
- * ../browsey-expo/docs/agent-thread-visibility.md; re-enable by emptying this set.
- */
-const DISABLED_AGENTS = new Set<AgentId>(['claude-code'])
 
 export function isAgentId(value: unknown): value is AgentId {
   return value === 'claude-code' || value === 'codex'
@@ -176,7 +177,7 @@ function resolveDefaultModel(definition: AgentDefinition): string | null {
   }
 }
 
-function describeAgent(definition: AgentDefinition): AgentDescriptor {
+function describeAgent(definition: AgentDefinition, targetCwd: string | null): AgentDescriptor {
   return {
     id: definition.id,
     name: definition.name,
@@ -184,13 +185,33 @@ function describeAgent(definition: AgentDefinition): AgentDescriptor {
     models: definition.models,
     defaultModel: resolveDefaultModel(definition),
     lastFailure: lastFailures.get(definition.id) ?? null,
+    launchMode: definition.launchMode,
+    sessions: definition.listSessions?.() ?? [],
+    targetCwd,
   }
 }
 
-export function getAgentCapabilities(): AgentCapabilitiesResponse {
-  const agents = (['claude-code', 'codex'] as const)
-    .filter((id) => !DISABLED_AGENTS.has(id))
-    .map((id) => describeAgent(AGENT_DEFINITIONS[id]))
+export type CapabilitiesTarget = {
+  absPath: string
+  isDirectory: boolean
+}
+
+/**
+ * `target` is optional. With it, each agent also reports the cwd a launch would
+ * resolve to, which is the only way a client can tell whether one of the listed
+ * sessions is already open on the thing the user is looking at.
+ */
+export async function getAgentCapabilities(
+  target?: CapabilitiesTarget
+): Promise<AgentCapabilitiesResponse> {
+  const agents = await Promise.all(
+    (['claude-code', 'codex'] as const).map(async (id) => {
+      const targetCwd = target
+        ? (await resolveThreadCwd(target.absPath, target.isDirectory, id)).cwd
+        : null
+      return describeAgent(AGENT_DEFINITIONS[id], targetCwd)
+    })
+  )
 
   return { enabled: true, agents }
 }
@@ -335,16 +356,18 @@ export function validateLaunchRequest(body: unknown): ValidatedLaunchRequest {
   if (!isAgentId(agent)) {
     throw new AgentLaunchError(400, 'Unknown agent')
   }
-  // A client holding a cached capabilities list must not be able to launch a
-  // withheld agent.
-  if (DISABLED_AGENTS.has(agent)) {
-    throw new AgentLaunchError(422, `${AGENT_DEFINITIONS[agent].name} is currently disabled`)
-  }
-  if (typeof prompt !== 'string' || prompt.trim().length === 0) {
-    throw new AgentLaunchError(400, 'prompt is required')
-  }
-  if (prompt.length > MAX_PROMPT_LENGTH) {
-    throw new AgentLaunchError(400, `prompt exceeds ${MAX_PROMPT_LENGTH} characters`)
+
+  // A `session` agent opens an empty session and hands it over, so a prompt is
+  // not merely optional — there is nowhere to put one.
+  const wantsPrompt = AGENT_DEFINITIONS[agent].launchMode === 'prompt'
+  const rawPrompt = typeof prompt === 'string' ? prompt : ''
+  if (wantsPrompt) {
+    if (rawPrompt.trim().length === 0) {
+      throw new AgentLaunchError(400, 'prompt is required')
+    }
+    if (rawPrompt.length > MAX_PROMPT_LENGTH) {
+      throw new AgentLaunchError(400, `prompt exceeds ${MAX_PROMPT_LENGTH} characters`)
+    }
   }
 
   const resolvedModel = model ?? ''
@@ -376,28 +399,10 @@ export function validateLaunchRequest(body: unknown): ValidatedLaunchRequest {
 
   return {
     agent,
-    prompt: prompt.trim(),
+    prompt: wantsPrompt ? rawPrompt.trim() : '',
     model: resolvedModel,
     target: { kind, path, ...(kind === 'selection' ? { selection } : {}) },
   }
-}
-
-/** Claude only; Codex threads go over the app-server protocol instead. */
-function buildClaudeArgv(
-  binary: string,
-  finalPrompt: string,
-  model: string,
-  sessionId: string
-): string[] {
-  return [
-    binary,
-    '-p',
-    finalPrompt,
-    '--dangerously-skip-permissions',
-    '--session-id',
-    sessionId,
-    ...(model ? ['--model', model] : []),
-  ]
 }
 
 /** Sole purpose is debugging failed runs; stdout is otherwise discarded. */
@@ -433,36 +438,24 @@ function readFailureReason(logPath: string): string | null {
 function toLaunchError(error: unknown, command: string): AgentLaunchError {
   if (error instanceof AgentLaunchError) return error
   if (error instanceof CodexAppServerError) return new AgentLaunchError(422, error.message)
+  if (error instanceof ClaudeRemoteControlError) return new AgentLaunchError(422, error.message)
   const message = error instanceof Error ? error.message : String(error)
   return new AgentLaunchError(500, `Failed to start ${command}: ${message}`)
 }
 
-/** Resolves once the spawn has had a chance to fail with ENOENT and friends. */
-function awaitSpawn(child: ReturnType<typeof spawn>): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const onError = (error: Error) => {
-      clearTimeout(timer)
-      reject(error)
-    }
-    const timer = setTimeout(() => {
-      child.removeListener('error', onError)
-      resolve()
-    }, SPAWN_GRACE_MS)
-    child.once('error', onError)
-  })
-}
-
 export type SpawnedThread = {
-  /** Claude: the minted `--resume` id. Codex: the app-server thread id. */
+  /** Claude: the live session's id. Codex: the app-server thread id. */
   sessionId: string
+  /** Deep link that continues this thread on the phone, when one exists. */
+  url?: string
 }
 
 /**
  * Argv is passed as an array (never a shell), so prompt and selection carry no
- * injection surface. Claude runs fully detached and survives a browsey restart;
- * Codex is driven over the app-server protocol, so its thread is tied to this
- * process for the duration of the turn — the cost of being visible in Codex
- * Desktop, which ignores `codex exec` runs entirely.
+ * injection surface. Claude opens a detached Remote Control session that
+ * outlives browsey; Codex is driven over the app-server protocol, so its thread
+ * is tied to this process for the duration of the turn — the cost of being
+ * visible in Codex Desktop, which ignores `codex exec` runs entirely.
  */
 export async function spawnAgentThread({
   agent,
@@ -533,20 +526,12 @@ export async function spawnAgentThread({
       return { sessionId: threadId }
     }
 
-    // Minting the session id keeps the run resumable with `claude --resume <uuid>`
-    // even though stdout is discarded.
-    const sessionId = randomUUID()
-    const argv = buildClaudeArgv(binary, finalPrompt, model, sessionId)
-    const child = spawn(argv[0]!, argv.slice(1), {
-      cwd,
-      detached: true,
-      stdio: ['ignore', logFd, logFd],
-      env,
-    })
-    watchOutcome(child)
-    await awaitSpawn(child)
-    child.unref()
-    return { sessionId }
+    // No exit is watched: the session is meant to sit idle until somebody talks
+    // to it, so an exit code says nothing about its health. A session that never
+    // registers throws instead, and that surfaces at the launch call.
+    const { session } = await startClaudeSession({ binary, cwd, model, logFd, env })
+    closeLog()
+    return { sessionId: session.sessionId, url: session.url ?? undefined }
   } catch (error) {
     closeLog()
     throw toLaunchError(error, command)

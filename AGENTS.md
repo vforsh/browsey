@@ -127,8 +127,9 @@ browsey pair [target]                 # --url <url>, --name <name>
 | `GET /api/git/commit?path=/&hash=<sha>` | Git commit details, stats, navigation, and changed files (`includeAdjacent=0` skips navigation lookup) |
 | `POST /api/git/revert` | Discard changes for one git file |
 | `GET /api/reload` | SSE live reload (watch mode) |
-| `GET /api/agents` | Agent capabilities (installed CLIs + curated model lists) — **bearer token required** |
-| `POST /api/agents/launch` | Launch a detached Codex / Claude Code thread — **bearer token required** |
+| `GET /api/agents?path=/` | Agent capabilities (installed CLIs, curated model lists, live sessions; `path` adds the cwd a launch would resolve to) — **bearer token required** |
+| `POST /api/agents/launch` | Launch a Codex thread or open a Claude session — **bearer token required** |
+| `POST /api/agents/stop` | End a live Claude session by `sessionId` — **bearer token required** |
 
 ## Key Patterns
 
@@ -149,13 +150,20 @@ browsey pair [target]                 # --url <url>, --name <name>
 ### Agent Threads
 
 Full research on which surfaces list these threads and why lives in
-`../browsey-expo/docs/agent-thread-visibility.md` — read it before re-investigating any of
-it. **Claude is currently withheld from the picker** via `DISABLED_AGENTS` in `agents.ts`
-(its threads never reach the Claude iOS app); emptying that set restores it.
+`../browsey-expo/docs/agent-thread-visibility.md` — read it before re-investigating any of it.
 
-`/api/agents/*` launches headless Codex / Claude Code runs on this machine. Fire-and-forget:
-Browsey spawns a detached process and responds immediately; results are picked up later via
-`claude --resume <session-id>` / `codex resume`.
+**The two agents launch differently on purpose**, and `AgentDescriptor.launchMode` is how a
+client tells them apart:
+
+- `prompt` (Codex) composes a one-shot thread from a prompt plus its file context, spawns it,
+  and forgets it. Results are picked up with `codex resume`.
+- `session` (Claude) takes no prompt at all. It opens a live Remote Control session in a
+  directory and hands back a link that opens that exact session in the phone app; the
+  conversation itself happens there. Passing a prompt would mean typing into a TUI, which was
+  measured, rejected, and written up in the research doc.
+
+A `session` agent is the only one with anything to stop, which is what `/api/agents/stop` is
+for.
 
 - **Enabled by default**, disabled with `--no-agents`. Every route needs a bearer token
   (`Authorization: Bearer …` or `?token=`), compared in constant time via `auth.ts`.
@@ -172,10 +180,15 @@ Browsey spawns a detached process and responds immediately; results are picked u
 - **Never mutate agent configs** from the server. Fresh projects materialize naturally on the
   agent side on first run.
 - **Spawning** follows the `git.ts` discipline — argv arrays, never a shell — with
-  stdout/stderr to `~/.browsey/agent-runs/<timestamp>-<agent>.log`. Claude is fully detached
-  and survives a browsey restart; Codex talks stdio JSON-RPC, so its turn is tied to this
-  process and a restart mid-run aborts it. Prompts are
-  capped (100k chars) and selections (32 KB) to stay well inside `ARG_MAX`.
+  stdout/stderr to `~/.browsey/agent-runs/<timestamp>-<agent>.log`. Claude is detached and
+  outlives a browsey restart; Codex talks stdio JSON-RPC, so its turn is tied to this process
+  and a restart mid-run aborts it. Prompts are capped (100k chars) and selections (32 KB) to
+  stay well inside `ARG_MAX`.
+- **Claude sessions are never tracked in memory.** `listClaudeSessions` reads
+  `~/.claude/sessions/<pid>.json`, which Claude writes itself, and keeps the entries whose pid
+  is still alive — so sessions started before the last restart are still listed and still
+  stoppable, and nothing has to be reconciled. Stale files are normal; the pid check is what
+  makes the list truthful.
 - **Binary resolution**: `BROWSEY_CLAUDE_BIN` / `BROWSEY_CODEX_BIN`, then `~/.local/bin/claude`
   and `/opt/homebrew/bin/codex`, then `Bun.which` against a PATH augmented with those dirs.
   Do **not** default to an interactive shell's `which claude` — it points into a volatile fnm
@@ -187,11 +200,21 @@ Browsey spawns a detached process and responds immediately; results are picked u
   last non-zero exit per agent in `lastFailures`, and `GET /api/agents` reports it as
   `lastFailure` so the app can warn where the agent is chosen. A clean exit clears it.
   In memory only — it describes machine state, so losing it on restart is correct.
-- **Desktop-app visibility is why each agent is launched differently.** Both desktop
-  apps filter on how a session was produced, and neither shows a plain headless run.
-  - *Claude Code* reads the same on-disk transcripts the CLI writes and filters on the
-    recorded surface, so `CLAUDE_CODE_ENTRYPOINT=claude-desktop` is forced on every run.
-    A bare `-p` run records `sdk-cli` and stays invisible.
+- **App visibility is why each agent is launched differently.** Every one of these apps
+  filters on how a session was produced, and none of them shows a plain headless run.
+  - *Claude Code* on the Mac reads the same on-disk transcripts the CLI writes and filters on
+    the recorded surface, so `CLAUDE_CODE_ENTRYPOINT=claude-desktop` is forced on every run —
+    a bare `-p` run records `sdk-cli` and stays invisible. Forcing it also stops the value
+    depending on the environment browsey inherited: a shell running inside Claude Code exports
+    it, a launchd job does not.
+  - *The Claude phone app* lists live Remote Control sessions and nothing else, which no
+    transcript can satisfy. `claude-remote-control.ts` therefore starts an interactive session
+    under a pty — `script(1)`, so no native pty module is needed — with
+    `--permission-mode bypassPermissions`. That flag is load-bearing: without it the run stops
+    on the "Make auto mode your default permission mode?" prompt and never registers, and
+    answering that prompt blind is exactly the screen-scraping the research doc rejected.
+    Registration takes about a second; `bridgeSessionId` lands a beat later and becomes
+    `https://claude.ai/code/<id>`, which opens that session on the phone.
   - *Codex Desktop* and the Codex iOS app filter on the session's `source`. `codex exec`
     records `source: exec`, which they treat as automation and never list — no flag or env
     var changes it (`CODEX_INTERNAL_ORIGINATOR_OVERRIDE` moves `originator` only; `source`
