@@ -200,6 +200,23 @@ Browsey spawns a detached process and responds immediately; results are picked u
     switch: `capabilities.experimentalApi`, `-c threads.history_mode=paginated`,
     `--enable paginated_threads` (not a real flag) and `thread/start`'s `config` in two
     shapes were all tried and all still yield `legacy`. Being readable beats being listed.
+  - The daemon path was checked too and is a dead end for now: the one configuration that
+    ever produced both (`source: vscode` + `history_mode: paginated`) was an app-server
+    running Codex **0.146.0** — the managed daemon, which the official iOS client talks to.
+    Across every local session there are zero `source: vscode` + `paginated` threads on
+    0.148.0, so on the installed version the app-server transport always writes `legacy`.
+    The 0.146.0 binary is gone (cask upgrade), and the daemon's control socket does not
+    answer a plain `initialize`, so there is no version-matched client to reach it with.
+  - **Cheap re-test after a Codex upgrade** — if this combination starts working, switching
+    back is a small change. Run, with no turn so it costs nothing, and look at the result:
+    ```bash
+    codex app-server   # then send, as newline-delimited JSON-RPC on stdin:
+    # {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"clientInfo":{"name":"browsey","version":"1"}}}
+    # {"jsonrpc":"2.0","method":"initialized","params":{}}
+    # {"jsonrpc":"2.0","id":2,"method":"thread/start","params":{"cwd":"<dir>","sandbox":"danger-full-access","approvalPolicy":"never"}}
+    ```
+    `thread.historyMode` in the id-2 response is the whole answer: `paginated` means the
+    app-server route is viable again, `legacy` means stay on `codex exec`.
   - Codex Desktop also never refreshes its list for a thread created by another process;
     it appears after the app restarts, or immediately if something opens
     `codex://threads/<id>` — which drags the app to the foreground, so we do not fire it.
