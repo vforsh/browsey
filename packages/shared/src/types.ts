@@ -1,3 +1,10 @@
+export type AgentsOptions = {
+  /** When false, every `/api/agents/*` route answers 404. */
+  enabled: boolean
+  /** Bearer token required by every `/api/agents/*` route. */
+  token: string
+}
+
 export type ApiServerOptions = {
   root: string
   port: number
@@ -13,6 +20,7 @@ export type ApiServerOptions = {
   httpsKey?: string
   watch: boolean
   corsOrigin: string
+  agents: AgentsOptions
   quiet?: boolean
 }
 
@@ -118,6 +126,7 @@ export type ApiRoutesOptions = {
   readonly: boolean
   showHidden: boolean
   ignorePatterns: string[]
+  agents: AgentsOptions
 }
 
 export interface InstanceInfo {
@@ -140,6 +149,8 @@ export interface InstanceInfo {
   ignorePatterns?: string[]
   watch?: boolean
   corsOrigin?: string
+  /** Agent launch endpoints. Absent on registry entries written before agents existed. */
+  agents?: boolean
 }
 
 export interface RegistryFile {
@@ -270,4 +281,54 @@ export type GitChangesResponse = {
 
 export type GitRevertResponse = {
   ok: true
+}
+
+export type AgentId = 'claude-code' | 'codex'
+
+export type AgentModelOption = {
+  /** Empty string means "let the CLI pick" — the model flag is omitted. */
+  id: string
+  label: string
+}
+
+export type AgentDescriptor = {
+  id: AgentId
+  name: string
+  /** The CLI binary was found and is executable on the server. */
+  installed: boolean
+  models: AgentModelOption[]
+}
+
+export type AgentCapabilitiesResponse = {
+  enabled: boolean
+  agents: AgentDescriptor[]
+}
+
+export type AgentTargetKind = 'directory' | 'file' | 'selection'
+
+export type AgentLaunchTarget = {
+  kind: AgentTargetKind
+  /** Root-relative path, validated with `resolveSafePath`. */
+  path: string
+  /** Required when `kind === 'selection'`. */
+  selection?: string
+}
+
+export type AgentLaunchRequest = {
+  agent: AgentId
+  prompt: string
+  /** Must be one of the ids from the agent's curated model list. */
+  model?: string
+  target: AgentLaunchTarget
+}
+
+export type AgentLaunchResponse = {
+  launched: true
+  agent: AgentId
+  /** Absolute directory the agent was spawned in. */
+  cwd: string
+  /** The cwd matched a project the agent already knows about. */
+  reusedProject: boolean
+  /** Claude Code only — the minted id for `claude --resume <id>`. */
+  sessionId?: string
 }

@@ -26,6 +26,7 @@ async function fixture(): Promise<{ root: string; options: ApiRoutesOptions }> {
       readonly: true,
       showHidden: false,
       ignorePatterns: [],
+      agents: { enabled: false, token: '' },
     },
   }
 }

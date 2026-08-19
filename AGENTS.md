@@ -44,6 +44,7 @@ browsey/
     │       ├── server.ts     # API Bun server with CORS
     │       ├── routes.ts     # API route handlers
     │       ├── git.ts        # Git operations
+│       ├── agents.ts      # Agent thread launch (capabilities, cwd resolution, spawn)
     │       └── live-reload.ts # SSE live reload
     ├── app/                  # @vforsh/browsey-app
     │   ├── package.json
@@ -61,6 +62,7 @@ browsey/
         ├── tsconfig.json
         └── src/
             ├── bin.ts        # CLI entry point
+            ├── agent-token.ts # Persisted agent bearer token (~/.browsey/agent-token)
             └── registry.ts   # Instance tracking
 ```
 
@@ -94,13 +96,16 @@ browsey stop --force                  # SIGKILL
 # Reload running instances (picks up code changes)
 browsey api reload <target>           # target: PID, :port, or path
 browsey app reload <target>           # alias: restart
+
+# Pair the mobile app for agent threads (prints token + QR)
+browsey pair [target]                 # --url <url>, --name <name>
 ```
 
 ### `browsey start` options
-`-p/--port` (API, default 4200), `--app-port` (App, default 4201), `-h/--host` (default 0.0.0.0), `-i/--ignore`, `--no-readonly`, `--hidden`, `--no-qr`, `--https`, `--https-cert`, `--https-key`, `-w/--watch`, `--cors <origin>` (default `*`), `--open`
+`-p/--port` (API, default 4200), `--app-port` (App, default 4201), `-h/--host` (default 0.0.0.0), `-i/--ignore`, `--no-readonly`, `--hidden`, `--no-qr`, `--https`, `--https-cert`, `--https-key`, `-w/--watch`, `--cors <origin>` (default `*`), `--no-agents`, `--agents-token <token>`, `--open`
 
 ### `browsey api` options
-`-p/--port` (default 4200), `-h/--host` (default 0.0.0.0), `-i/--ignore`, `--no-readonly`, `--hidden`, `--no-qr`, `--https`, `--https-cert`, `--https-key`, `-w/--watch`, `--cors <origin>` (default `*`)
+`-p/--port` (default 4200), `-h/--host` (default 0.0.0.0), `-i/--ignore`, `--no-readonly`, `--hidden`, `--no-qr`, `--https`, `--https-cert`, `--https-key`, `-w/--watch`, `--cors <origin>` (default `*`), `--no-agents`, `--agents-token <token>`
 
 ### `browsey app` options
 `-p/--port` (default 4201), `-h/--host` (default 0.0.0.0), `--open`, `--https`, `--https-cert`, `--https-key`, `--no-qr`, `-w/--watch`
@@ -122,6 +127,8 @@ browsey app reload <target>           # alias: restart
 | `GET /api/git/commit?path=/&hash=<sha>` | Git commit details, stats, navigation, and changed files (`includeAdjacent=0` skips navigation lookup) |
 | `POST /api/git/revert` | Discard changes for one git file |
 | `GET /api/reload` | SSE live reload (watch mode) |
+| `GET /api/agents` | Agent capabilities (installed CLIs + curated model lists) — **bearer token required** |
+| `POST /api/agents/launch` | Launch a detached Codex / Claude Code thread — **bearer token required** |
 
 ## Key Patterns
 
@@ -138,6 +145,37 @@ browsey app reload <target>           # alias: restart
 - **Readonly mode by default** - modifications require `--no-readonly` flag
 - **Text saves use conflict guards** - clients must pass the `modified` and `size` values from `/api/view` as `baseModified`/`baseSize`
 - **Null byte filtering** in path handling
+
+### Agent Threads
+
+`/api/agents/*` launches headless Codex / Claude Code runs on this machine. Fire-and-forget:
+Browsey spawns a detached process and responds immediately; results are picked up later via
+`claude --resume <session-id>` / `codex resume`.
+
+- **Enabled by default**, disabled with `--no-agents`. Every route needs a bearer token
+  (`Authorization: Bearer …` or `?token=`), compared in constant time via `auth.ts`.
+- **Token** lives at `~/.browsey/agent-token` (mode `0600`), generated once and reused across
+  restarts. `browsey pair` prints it plus a QR code whose payload is **JSON, not a URL**, so a
+  stray camera scan cannot leak the token into browser history.
+- **`readonly` does not gate agent routes.** `--no-readonly` protects Browsey's own file
+  mutations; agents are gated by `--no-agents` + the token. Keep these independent.
+- **cwd resolution** (`resolveThreadCwd`) is the whole of "reuse existing projects": both CLIs
+  key project state by cwd. Nearest known project (from `~/.claude.json` `projects` keys or
+  `[projects."…"]` headers in `~/.codex/config.toml`), else the git root, else the target dir.
+  The walk-up window is bounded by the git root so umbrella entries (`~/dev`, `/`) never win,
+  and `/` plus `$HOME` are blacklisted as a second belt.
+- **Never mutate agent configs** from the server. Fresh projects materialize naturally on the
+  agent side on first run.
+- **Spawning** follows the `git.ts` discipline — argv arrays, never a shell — but detached and
+  unref'd, with stdout/stderr to `~/.browsey/agent-runs/<timestamp>-<agent>.log`. Prompts are
+  capped (100k chars) and selections (32 KB) to stay well inside `ARG_MAX`.
+- **Binary resolution**: `BROWSEY_CLAUDE_BIN` / `BROWSEY_CODEX_BIN`, then `~/.local/bin/claude`
+  and `/opt/homebrew/bin/codex`, then `Bun.which` against a PATH augmented with those dirs.
+  Do **not** default to an interactive shell's `which claude` — it points into a volatile fnm
+  multishell dir. The augmented PATH is also passed to the child, which matters because the
+  `:4200` instance is launchd-managed with a bare PATH.
+- **Model lists** are curated constants in `agents.ts`; the `Default` label is enriched from
+  `~/.claude/settings.json` / `~/.codex/config.toml`. Updating models needs no app release.
 
 ### Instance Registry
 - Running instances tracked in `~/.browsey/instances.json` with atomic writes

@@ -1,15 +1,29 @@
 import { Command } from 'commander'
 import getPort from 'get-port'
 import { resolve } from 'path'
-import { networkInterfaces } from 'os'
+import { hostname, networkInterfaces } from 'os'
 import qrcode from 'qrcode-terminal'
 import { startApiServer } from '@vforsh/browsey-api'
 import { startAppServer } from '@vforsh/browsey-app'
 import { parseIgnorePatterns } from '@vforsh/browsey-shared'
-import type { InstanceInfo } from '@vforsh/browsey-shared'
+import type { AgentsOptions, InstanceInfo } from '@vforsh/browsey-shared'
 import { listInstances, findAllMatchingInstances, stopInstance, register, deregister, parseTarget } from './registry.js'
+import { getAgentTokenPath, readAgentToken, readOrCreateAgentToken } from './agent-token.js'
 
 export const VERSION = '0.1.0'
+
+/**
+ * Agents are on by default; the persisted token is what actually gates the
+ * endpoints. `--agents-token` overrides for this run without persisting.
+ */
+function resolveAgentsOptions(options: Record<string, unknown>): AgentsOptions {
+  if (((options.agents as boolean) ?? true) === false) {
+    return { enabled: false, token: '' }
+  }
+
+  const override = (options.agentsToken as string | undefined)?.trim()
+  return { enabled: true, token: override || readOrCreateAgentToken() }
+}
 
 const program = new Command()
 
@@ -37,6 +51,8 @@ const apiCommand = new Command('api')
   .option('--no-bonjour', 'Disable Bonjour/mDNS service advertisement')
   .option('-w, --watch', 'Enable live reload on file changes (dev mode)')
   .option('--cors <origin>', 'CORS allowed origin', '*')
+  .option('--no-agents', 'Disable the agent thread launch endpoints')
+  .option('--agents-token <token>', 'Use this agent token instead of the persisted one')
   .action(async (pathArg: string, options: Record<string, unknown>) => {
     const requestedPort = parseInt(options.port as string, 10)
     if (isNaN(requestedPort) || requestedPort < 1 || requestedPort > 65535) {
@@ -74,6 +90,7 @@ const apiCommand = new Command('api')
         httpsKey,
         watch: (options.watch as boolean) ?? false,
         corsOrigin: (options.cors as string) ?? '*',
+        agents: resolveAgentsOptions(options),
       },
       { register, deregister }
     )
@@ -128,6 +145,7 @@ apiCommand
       ignorePatterns,
       watch,
       corsOrigin,
+      agents,
     } = instance
 
     // Stop the instance
@@ -153,6 +171,7 @@ apiCommand
         httpsKey,
         watch: watch ?? false,
         corsOrigin: corsOrigin ?? '*',
+        agents: resolveAgentsOptions({ agents: agents ?? true }),
       },
       { register, deregister }
     )
@@ -300,6 +319,8 @@ const startCommand = new Command('start')
   .option('--no-bonjour', 'Disable Bonjour/mDNS service advertisement')
   .option('-w, --watch', 'Enable live reload on file changes (dev mode)')
   .option('--cors <origin>', 'CORS allowed origin', '*')
+  .option('--no-agents', 'Disable the agent thread launch endpoints')
+  .option('--agents-token <token>', 'Use this agent token instead of the persisted one')
   .option('--open', 'Open browser automatically')
   .action(async (pathArg: string, options: Record<string, unknown>) => {
     // Validate API port
@@ -337,6 +358,7 @@ const startCommand = new Command('start')
 
     const protocol = httpsEnabled ? 'https' : 'http'
     const rootPath = resolve(pathArg)
+    const agentsOptions = resolveAgentsOptions(options)
 
     // Start API server (quiet mode)
     const { shutdown: apiShutdown } = await startApiServer(
@@ -355,6 +377,7 @@ const startCommand = new Command('start')
         httpsKey,
         watch: (options.watch as boolean) ?? false,
         corsOrigin: (options.cors as string) ?? '*',
+        agents: agentsOptions,
         quiet: true,
       },
       { register, deregister }
@@ -400,6 +423,13 @@ const startCommand = new Command('start')
     console.log()
     console.log(`  \x1b[2mServing:\x1b[0m ${rootPath}`)
     console.log(`  \x1b[2mMode:\x1b[0m    ${(options.readonly as boolean) ?? true ? 'read-only' : 'read-write'}`)
+    console.log(
+      `  \x1b[2mAgents:\x1b[0m  ${
+        agentsOptions.enabled
+          ? "enabled — run 'browsey pair' to pair the mobile app"
+          : 'disabled'
+      }`
+    )
     console.log()
 
     const showQR = (options.qr as boolean) ?? true
@@ -426,6 +456,78 @@ const startCommand = new Command('start')
 program.addCommand(startCommand)
 program.addCommand(apiCommand)
 program.addCommand(appCommand)
+
+// Pair command
+program
+  .command('pair')
+  .description('Show the agent token and a pairing QR code for the mobile app')
+  .argument('[target]', 'PID, :port, or path substring of the API instance to pair with')
+  .option('--url <url>', 'Override the URL advertised in the QR payload')
+  .option('--name <name>', 'Override the machine name shown in the app')
+  .action((target: string | undefined, options: { url?: string; name?: string }) => {
+    const token = readAgentToken()
+    if (!token) {
+      console.error('Error: No agent token found.')
+      console.error(`Expected at ${getAgentTokenPath()}.`)
+      console.error('Start a server with agents enabled first (they are on by default).')
+      process.exit(1)
+    }
+
+    const url = options.url ?? resolvePairUrl(target)
+    if (!url) {
+      console.error('Error: Could not determine the API URL.')
+      console.error('Start an API instance, or pass --url http://<host>:<port>')
+      process.exit(1)
+    }
+
+    const name = options.name ?? hostname()
+    // JSON, not a URL: a stray scan by a stock camera app must not turn the
+    // token into an HTTP GET or a browser history entry.
+    const payload = JSON.stringify({ v: 1, kind: 'browsey-pair', url, token, name })
+
+    console.log()
+    console.log('  \x1b[1mBrowsey pairing\x1b[0m')
+    console.log()
+    console.log(`  \x1b[2mServer:\x1b[0m ${url}`)
+    console.log(`  \x1b[2mName:\x1b[0m   ${name}`)
+    console.log(`  \x1b[2mToken:\x1b[0m  ${token}`)
+    console.log()
+    console.log('  \x1b[2mScan in Browsey (Connect → Scan QR):\x1b[0m')
+    console.log()
+    qrcode.generate(payload, { small: true })
+    console.log()
+    console.log('  \x1b[2mAnyone with this token can run agents on this machine.\x1b[0m')
+    console.log()
+  })
+
+/** Network URL of the API instance to pair with, preferring an explicit target. */
+function resolvePairUrl(target: string | undefined): string | null {
+  const apiInstances = listInstances().filter((instance) => instance.kind === 'api')
+  if (apiInstances.length === 0) return null
+
+  const matching = target
+    ? findAllMatchingInstances(target).filter((instance) => instance.kind === 'api')
+    : apiInstances
+
+  if (matching.length === 0) {
+    console.error(`Error: No API instance found matching "${target}"`)
+    process.exit(1)
+  }
+  if (matching.length > 1) {
+    console.error(`Found ${matching.length} API instances:`)
+    for (const instance of matching) {
+      console.error(`  PID ${instance.pid}: ${instance.rootPath} (port ${instance.port})`)
+    }
+    console.error('\nPlease specify one (PID, :port, or path substring).')
+    process.exit(1)
+  }
+
+  const instance = matching[0]!
+  const protocol = instance.https ? 'https' : 'http'
+  const isWildcard = instance.host === '0.0.0.0' || instance.host === '::'
+  const host = isWildcard ? getNetworkIp() ?? '127.0.0.1' : instance.host
+  return `${protocol}://${host}:${instance.port}`
+}
 
 // List command
 program

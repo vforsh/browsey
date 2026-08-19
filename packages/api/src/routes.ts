@@ -2,11 +2,27 @@ import { promises as fs } from 'fs'
 import { createHash, randomUUID } from 'crypto'
 import os from 'os'
 import { basename, dirname, extname, join, relative } from 'path'
-import { getMimeType, getFileExtension, resolveSafePath, createIgnoreMatcher } from '@vforsh/browsey-shared'
+import {
+  getMimeType,
+  getFileExtension,
+  resolveSafePath,
+  createIgnoreMatcher,
+  extractToken,
+  validateToken,
+  unauthorizedResponse,
+} from '@vforsh/browsey-shared'
 import type { IgnoreMatcher } from '@vforsh/browsey-shared'
 import { findGitRoot, getGitStatus, getGitLog, getGitCommit, getGitChanges, revertGitFile, GitOperationError } from './git.js'
 import { entryExtension, readDirectoryItems, readSymlinkTarget, toServedPath } from './directory-listing.js'
-import type { ApiRoutesOptions, FileItem, ListResponse, SyncManifestDirectory, SyncManifestResponse, SearchResult, SearchResponse, GitStatusResponse, GitLogResponse, GitCommitResponse, GitCommitFile, GitChangesResponse, GitRevertResponse, HealthResponse, ViewResponse, SaveTextResponse } from '@vforsh/browsey-shared'
+import {
+  AgentLaunchError,
+  buildThreadPrompt,
+  getAgentCapabilities,
+  resolveThreadCwd,
+  spawnAgentThread,
+  validateLaunchRequest,
+} from './agents.js'
+import type { ApiRoutesOptions, FileItem, ListResponse, SyncManifestDirectory, SyncManifestResponse, SearchResult, SearchResponse, GitStatusResponse, GitLogResponse, GitCommitResponse, GitCommitFile, GitChangesResponse, GitRevertResponse, HealthResponse, ViewResponse, SaveTextResponse, AgentLaunchResponse } from '@vforsh/browsey-shared'
 
 const JSON_HEADERS = {
   'Content-Type': 'application/json',
@@ -245,8 +261,96 @@ export async function handleApiRequest(
   if (route === '/copy' && req.method === 'POST') {
     return handleCopy(req, options)
   }
+  if (route === '/agents' || route.startsWith('/agents/')) {
+    return handleAgentRoute(req, route, options)
+  }
 
   return jsonResponse({ error: 'Not found' }, { status: 404 })
+}
+
+/**
+ * Agent routes are gated by their own flag plus a bearer token — `readonly`
+ * deliberately does not apply, since it protects Browsey's own file mutations
+ * while agents run under their own opt-in.
+ */
+async function handleAgentRoute(
+  req: Request,
+  route: string,
+  options: ApiRoutesOptions
+): Promise<Response> {
+  if (!options.agents.enabled) {
+    return jsonResponse({ error: 'Agent endpoints are disabled' }, { status: 404 })
+  }
+  if (!validateToken(extractToken(req), options.agents.token)) {
+    return unauthorizedResponse()
+  }
+
+  if (route === '/agents' && req.method === 'GET') {
+    return jsonResponse(getAgentCapabilities())
+  }
+  if (route === '/agents/launch' && req.method === 'POST') {
+    return handleAgentLaunch(req, options)
+  }
+
+  return jsonResponse({ error: 'Not found' }, { status: 404 })
+}
+
+async function handleAgentLaunch(req: Request, options: ApiRoutesOptions): Promise<Response> {
+  let body: unknown
+  try {
+    body = await req.json()
+  } catch {
+    return jsonResponse({ error: 'Invalid JSON body' }, { status: 400 })
+  }
+
+  try {
+    const { agent, prompt, model, target } = validateLaunchRequest(body)
+
+    // The target still has to sit inside the served root even though the
+    // resolved cwd may legitimately land above it.
+    const safePath = resolveSafePath(options.root, target.path)
+    if (!safePath) {
+      return jsonResponse({ error: 'Access denied: Invalid path' }, { status: 403 })
+    }
+
+    let stat: Awaited<ReturnType<typeof fs.stat>>
+    try {
+      stat = await fs.stat(safePath.fullPath)
+    } catch {
+      return jsonResponse({ error: 'Target path not found' }, { status: 404 })
+    }
+    if (target.kind === 'directory' && !stat.isDirectory()) {
+      return jsonResponse({ error: 'Target path is not a directory' }, { status: 400 })
+    }
+    if (target.kind !== 'directory' && stat.isDirectory()) {
+      return jsonResponse({ error: 'Target path is not a file' }, { status: 400 })
+    }
+
+    const { cwd, reused } = await resolveThreadCwd(safePath.fullPath, stat.isDirectory(), agent)
+    const finalPrompt = buildThreadPrompt({
+      kind: target.kind,
+      prompt,
+      cwd,
+      targetAbs: safePath.fullPath,
+      selection: target.selection,
+    })
+
+    const { sessionId } = await spawnAgentThread({ agent, cwd, finalPrompt, model })
+
+    const response: AgentLaunchResponse = {
+      launched: true,
+      agent,
+      cwd,
+      reusedProject: reused,
+      ...(sessionId ? { sessionId } : {}),
+    }
+    return jsonResponse(response)
+  } catch (error) {
+    if (error instanceof AgentLaunchError) {
+      return jsonResponse({ error: error.message }, { status: error.status })
+    }
+    return jsonResponse({ error: 'Internal server error' }, { status: 500 })
+  }
 }
 
 async function handleList(url: URL, options: ApiRoutesOptions): Promise<Response> {

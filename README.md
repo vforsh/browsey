@@ -89,6 +89,8 @@ bunx browsey start ./photos --open
 | `--no-https` | Disable HTTPS | - |
 | `--https-cert <path>` | Path to TLS certificate (PEM) | `./certs/browsey.pem` |
 | `--https-key <path>` | Path to TLS private key (PEM) | `./certs/browsey-key.pem` |
+| `--no-agents` | Disable the agent thread launch endpoints | `false` (agents on) |
+| `--agents-token <token>` | Use this agent token instead of the persisted one | - |
 
 ## API
 
@@ -105,6 +107,8 @@ Browsey exposes a simple REST API:
 | `GET /api/git/changes?path=/` | Git file changes |
 | `GET /api/git/commit?path=/&hash=<sha>` | Git commit details, stats, navigation, and changed files (`includeAdjacent=0` skips navigation lookup) |
 | `POST /api/git/revert` | Discard changes for one git file |
+| `GET /api/agents` | Agent capabilities: which CLIs are installed and their model lists (**bearer token required**) |
+| `POST /api/agents/launch` | Launch a headless Codex / Claude Code thread (**bearer token required**) |
 
 ### Response format
 
@@ -131,6 +135,36 @@ Browsey exposes a simple REST API:
   ]
 }
 ```
+
+## Agent threads
+
+Browsey can launch a headless [Codex](https://developers.openai.com/codex/cli) or
+[Claude Code](https://docs.claude.com/en/docs/claude-code) run from a paired mobile app.
+It is fire-and-forget: Browsey spawns a detached process and answers immediately. Results
+live in the CLIs' own session stores — pick them up later on the Mac with
+`claude --resume <session-id>` or `codex resume`.
+
+Agent endpoints are **enabled by default** and always require a bearer token.
+
+```bash
+browsey pair              # print the token and a pairing QR code
+browsey start --no-agents # or turn the endpoints off entirely
+```
+
+- **Token**: generated once, stored at `~/.browsey/agent-token` with mode `0600`, reused
+  across restarts. `--agents-token` overrides it for one run without persisting.
+- **Not gated by `readonly`**: `--no-readonly` protects Browsey's *own* file mutations.
+  Agents have their own opt-in (`--no-agents`) plus the token, so the two are independent.
+- **Full access**: threads run as `codex exec --dangerously-bypass-approvals-and-sandbox`
+  and `claude -p --dangerously-skip-permissions`. Anyone holding the token can run
+  arbitrary code on the machine — treat it like an SSH key.
+- **cwd**: resolved to the nearest agent project already known to the CLI, else the git
+  root, else the target folder — so threads land in real projects and reuse their history.
+- **Logs**: stdout/stderr of each run goes to `~/.browsey/agent-runs/<timestamp>-<agent>.log`
+  (debugging only, no rotation yet).
+- **Binary resolution**: `BROWSEY_CLAUDE_BIN` / `BROWSEY_CODEX_BIN`, then `~/.local/bin/claude`
+  and `/opt/homebrew/bin/codex`, then `PATH` (augmented with those two directories, which
+  matters for the launchd-managed instance).
 
 ## Development
 

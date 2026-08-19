@@ -55,6 +55,7 @@ export async function startApiServer(
     readonly: options.readonly,
     showHidden: options.showHidden,
     ignorePatterns: options.ignorePatterns,
+    agents: options.agents,
   }
 
   // Start file watcher if enabled
@@ -128,6 +129,13 @@ export async function startApiServer(
     console.log(`  \x1b[2mMode:\x1b[0m    ${options.readonly ? 'read-only' : 'read-write'}`)
     console.log(`  \x1b[2mBonjour:\x1b[0m ${options.bonjour ? `enabled (_${getBrowseyServiceType()}._tcp)` : 'disabled'}`)
     console.log(`  \x1b[2mCORS:\x1b[0m    ${corsOrigin}`)
+    console.log(
+      `  \x1b[2mAgents:\x1b[0m  ${
+        options.agents.enabled
+          ? "enabled — run 'browsey pair' to pair the mobile app"
+          : 'disabled'
+      }`
+    )
     console.log()
 
     if (options.showQR && networkUrl) {
@@ -162,6 +170,7 @@ export async function startApiServer(
     ignorePatterns: options.ignorePatterns,
     watch: options.watch,
     corsOrigin: options.corsOrigin,
+    agents: options.agents.enabled,
   })
 
   const shutdown = () => {
