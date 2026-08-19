@@ -166,11 +166,9 @@ Browsey spawns a detached process and responds immediately; results are picked u
   and `/` plus `$HOME` are blacklisted as a second belt.
 - **Never mutate agent configs** from the server. Fresh projects materialize naturally on the
   agent side on first run.
-- **Spawning** follows the `git.ts` discipline — argv arrays, never a shell — with
-  stdout/stderr to `~/.browsey/agent-runs/<timestamp>-<agent>.log`. Claude is fully
-  detached and survives a browsey restart. Codex is driven over stdio JSON-RPC, so its
-  turn is tied to this process: a restart mid-run aborts it. That is the accepted cost of
-  being visible in Codex Desktop at all. Prompts are
+- **Spawning** follows the `git.ts` discipline — argv arrays, never a shell — but detached
+  and unref'd, with stdout/stderr to `~/.browsey/agent-runs/<timestamp>-<agent>.log`, so
+  threads survive a browsey restart. Prompts are
   capped (100k chars) and selections (32 KB) to stay well inside `ARG_MAX`.
 - **Binary resolution**: `BROWSEY_CLAUDE_BIN` / `BROWSEY_CODEX_BIN`, then `~/.local/bin/claude`
   and `/opt/homebrew/bin/codex`, then `Bun.which` against a PATH augmented with those dirs.
@@ -191,15 +189,20 @@ Browsey spawns a detached process and responds immediately; results are picked u
   - *Codex Desktop* (inside `ChatGPT.app`) filters on the session's `source`. `codex exec`
     records `source: exec`, which it treats as automation and never lists — no flag,
     env var or originator override changes that (`CODEX_INTERNAL_ORIGINATOR_OVERRIDE`
-    moves `originator` only, and `source` is set structurally by the subcommand). So
-    Codex threads are created over the **app-server protocol** instead
-    (`codex-app-server.ts`), which records `source: vscode` — the same value as the
-    Desktop app's own threads — and `originator: browsey` from our `clientInfo`.
-  - Codex Desktop still will not *refresh* its list for a thread created by another
-    process; it shows up after the app restarts, or immediately if something opens
-    `codex://threads/<id>`. We deliberately do **not** fire that deep link: it drags the
-    Desktop app to the foreground on every launch (`open -g` does not avoid this), which
-    is the wrong trade for a phone-triggered background job.
+    moves `originator` only; `source` is set structurally by the subcommand).
+  - **Launching Codex over the app-server protocol was tried and reverted — do not retry
+    it.** `codex app-server` does produce `source: vscode`, and threads then appear in the
+    Desktop sidebar, but that transport records `history_mode: legacy`, which writes
+    `user_message`/`agent_message` events instead of the `item_completed` items the Codex
+    clients render. The result is a thread that is listed but cannot be opened: the iOS
+    app shows "Error loading messages", because a completed turn has no items. `codex exec`
+    records `history_mode: paginated` and reads fine everywhere. There is no client-side
+    switch: `capabilities.experimentalApi`, `-c threads.history_mode=paginated`,
+    `--enable paginated_threads` (not a real flag) and `thread/start`'s `config` in two
+    shapes were all tried and all still yield `legacy`. Being readable beats being listed.
+  - Codex Desktop also never refreshes its list for a thread created by another process;
+    it appears after the app restarts, or immediately if something opens
+    `codex://threads/<id>` — which drags the app to the foreground, so we do not fire it.
   - Do not write into either desktop app's private state to fake visibility.
 - **Model lists** are curated constants in `agents.ts`; the `Default` label is enriched from
   `~/.claude/settings.json` / `~/.codex/config.toml`. Updating models needs no app release.
