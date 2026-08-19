@@ -297,6 +297,8 @@ export type AgentDescriptor = {
   /** The CLI binary was found and is executable on the server. */
   installed: boolean
   models: AgentModelOption[]
+  /** Model the CLI picks when no flag is passed, read from its config. */
+  defaultModel: string | null
 }
 
 export type AgentCapabilitiesResponse = {

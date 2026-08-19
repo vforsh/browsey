@@ -131,25 +131,22 @@ export function resolveAgentBinary(agent: AgentId): string | null {
   return found && isExecutable(found) ? found : null
 }
 
-function defaultModelLabel(definition: AgentDefinition): string {
+/** Best effort: the CLI's own configured model, so the app can label "Default". */
+function resolveDefaultModel(definition: AgentDefinition): string | null {
   try {
-    const model = definition.readDefaultModel(readFileSync(definition.defaultModelFile, 'utf-8'))
-    return model ? `Default (${model})` : 'Default'
+    return definition.readDefaultModel(readFileSync(definition.defaultModelFile, 'utf-8'))
   } catch {
-    return 'Default'
+    return null
   }
 }
 
 function describeAgent(definition: AgentDefinition): AgentDescriptor {
-  const models = definition.models.map((model) =>
-    model.id === '' ? { id: '', label: defaultModelLabel(definition) } : model
-  )
-
   return {
     id: definition.id,
     name: definition.name,
     installed: resolveAgentBinary(definition.id) !== null,
-    models,
+    models: definition.models,
+    defaultModel: resolveDefaultModel(definition),
   }
 }
 
