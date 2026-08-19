@@ -13,6 +13,7 @@ import { homedir } from 'os'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'path'
 import { findGitRoot } from './git.js'
 import { CodexAppServerError, startCodexThread } from './codex-app-server.js'
+import { nameCodexThread } from './codex-thread-title.js'
 import {
   ClaudeRemoteControlError,
   listClaudeSessions,
@@ -523,6 +524,15 @@ export async function spawnAgentThread({
       })
       watchOutcome(child)
       child.unref()
+
+      // Not awaited: titling takes seconds and the phone is waiting on this
+      // response. It also must not be able to fail the launch — the thread is
+      // already running by now, with or without a name.
+      void nameCodexThread({ binary, cwd, threadId, prompt: finalPrompt, env }).catch((error) => {
+        const message = error instanceof Error ? error.message : String(error)
+        console.warn(`Warning: could not name codex thread ${threadId}: ${message}`)
+      })
+
       return { sessionId: threadId }
     }
 

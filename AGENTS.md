@@ -44,7 +44,9 @@ browsey/
     │       ├── server.ts     # API Bun server with CORS
     │       ├── routes.ts     # API route handlers
     │       ├── git.ts        # Git operations
-│       ├── agents.ts      # Agent thread launch (capabilities, cwd resolution, spawn)
+    │       ├── agents.ts      # Agent thread launch (capabilities, cwd resolution, spawn)
+    │       ├── codex-app-server.ts   # Codex app-server JSON-RPC client + thread start
+    │       ├── codex-thread-title.ts # Two-phase Codex thread titling (slice, then generated)
     │       └── live-reload.ts # SSE live reload
     ├── app/                  # @vforsh/browsey-app
     │   ├── package.json
