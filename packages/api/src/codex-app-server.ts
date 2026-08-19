@@ -12,7 +12,14 @@ import { writeSync } from 'fs'
  * newline-delimited JSON-RPC instead of as flags.
  */
 
-const INITIALIZE_TIMEOUT_MS = 15_000
+/**
+ * Cold-start budget, not a network timeout. Codex does a great deal before it
+ * ever reads stdin — a 214 MB binary to page in, a state database to open, a
+ * plugin catalog and model list to fetch — and on a cold or loaded machine that
+ * has been measured at over 40 seconds. Warm, it answers in about 35 ms, which
+ * is why a far tighter budget looked safe and then failed launches for weeks.
+ */
+export const INITIALIZE_TIMEOUT_MS = 90_000
 const THREAD_TIMEOUT_MS = 30_000
 
 /** Stop-loss for a `turn/completed` that never arrives; see endOnTurnCompletion. */
@@ -188,11 +195,21 @@ export async function openAppServer({
     return resultOf(await awaitResponse(id, timeoutMs), method)
   }
 
-  await request(
-    'initialize',
-    { clientInfo: { name: CLIENT_NAME, title: 'Browsey', version: '1' } },
-    INITIALIZE_TIMEOUT_MS
-  )
+  try {
+    await request(
+      'initialize',
+      { clientInfo: { name: CLIENT_NAME, title: 'Browsey', version: '1' } },
+      INITIALIZE_TIMEOUT_MS
+    )
+  } catch {
+    // A server that never finished its handshake has nobody left to talk to it,
+    // and it does not know that: left alone it sits there for days polling the
+    // API every few minutes. Nothing reaps it later, so it has to happen here.
+    child.kill('SIGKILL')
+    throw new CodexAppServerError(
+      `codex app-server did not finish starting within ${Math.round(INITIALIZE_TIMEOUT_MS / 1_000)}s`
+    )
+  }
   send({ jsonrpc: '2.0', method: 'initialized', params: {} })
 
   return {
@@ -252,31 +269,42 @@ export async function startCodexThread({
   const server = await openAppServer({ binary, cwd, logFd, env, detached: true })
   const { child, request } = server
 
-  const started = await request(
-    'thread/start',
-    {
-      cwd,
-      // Mirrors `--dangerously-bypass-approvals-and-sandbox`: threads launched
-      // from the phone get the same full access the CLI path gave them.
-      sandbox: 'danger-full-access',
-      approvalPolicy: 'never',
-      // These are person-initiated threads, not subagent spawns — same value the
-      // Desktop and iOS clients record for a thread someone started by hand.
-      threadSource: 'user',
-      ...(model ? { model } : {}),
-    },
-    THREAD_TIMEOUT_MS
-  )
+  // Up to `turn/start` the server has no reason of its own to live, so every way
+  // out of here that is not a running turn takes it down with it.
+  try {
+    const started = await request(
+      'thread/start',
+      {
+        cwd,
+        // Mirrors `--dangerously-bypass-approvals-and-sandbox`: threads launched
+        // from the phone get the same full access the CLI path gave them.
+        sandbox: 'danger-full-access',
+        approvalPolicy: 'never',
+        // These are person-initiated threads, not subagent spawns — same value the
+        // Desktop and iOS clients record for a thread someone started by hand.
+        threadSource: 'user',
+        ...(model ? { model } : {}),
+      },
+      THREAD_TIMEOUT_MS
+    )
 
-  const thread = started.thread as { id?: unknown } | undefined
-  const threadId = typeof thread?.id === 'string' ? thread.id : null
-  if (!threadId) {
-    throw new CodexAppServerError('codex started a thread without an id')
+    const thread = started.thread as { id?: unknown } | undefined
+    const threadId = typeof thread?.id === 'string' ? thread.id : null
+    if (!threadId) {
+      throw new CodexAppServerError('codex started a thread without an id')
+    }
+
+    await request(
+      'turn/start',
+      { threadId, input: [{ type: 'text', text: prompt }] },
+      THREAD_TIMEOUT_MS
+    )
+
+    endOnTurnCompletion(server)
+
+    return { threadId, child }
+  } catch (error) {
+    child.kill('SIGKILL')
+    throw error
   }
-
-  await request('turn/start', { threadId, input: [{ type: 'text', text: prompt }] }, THREAD_TIMEOUT_MS)
-
-  endOnTurnCompletion(server)
-
-  return { threadId, child }
 }
