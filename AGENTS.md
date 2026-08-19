@@ -166,9 +166,10 @@ Browsey spawns a detached process and responds immediately; results are picked u
   and `/` plus `$HOME` are blacklisted as a second belt.
 - **Never mutate agent configs** from the server. Fresh projects materialize naturally on the
   agent side on first run.
-- **Spawning** follows the `git.ts` discipline — argv arrays, never a shell — but detached
-  and unref'd, with stdout/stderr to `~/.browsey/agent-runs/<timestamp>-<agent>.log`, so
-  threads survive a browsey restart. Prompts are
+- **Spawning** follows the `git.ts` discipline — argv arrays, never a shell — with
+  stdout/stderr to `~/.browsey/agent-runs/<timestamp>-<agent>.log`. Claude is fully detached
+  and survives a browsey restart; Codex talks stdio JSON-RPC, so its turn is tied to this
+  process and a restart mid-run aborts it. Prompts are
   capped (100k chars) and selections (32 KB) to stay well inside `ARG_MAX`.
 - **Binary resolution**: `BROWSEY_CLAUDE_BIN` / `BROWSEY_CODEX_BIN`, then `~/.local/bin/claude`
   and `/opt/homebrew/bin/codex`, then `Bun.which` against a PATH augmented with those dirs.
@@ -186,48 +187,30 @@ Browsey spawns a detached process and responds immediately; results are picked u
   - *Claude Code* reads the same on-disk transcripts the CLI writes and filters on the
     recorded surface, so `CLAUDE_CODE_ENTRYPOINT=claude-desktop` is forced on every run.
     A bare `-p` run records `sdk-cli` and stays invisible.
-  - *Codex Desktop* (inside `ChatGPT.app`) filters on the session's `source`. `codex exec`
-    records `source: exec`, which it treats as automation and never lists — no flag,
-    env var or originator override changes that (`CODEX_INTERNAL_ORIGINATOR_OVERRIDE`
-    moves `originator` only; `source` is set structurally by the subcommand).
-  - **Launching Codex over the app-server protocol was tried and reverted — do not retry
-    it.** `codex app-server` does produce `source: vscode`, and threads then appear in the
-    Desktop sidebar, but that transport records `history_mode: legacy`, which writes
-    `user_message`/`agent_message` events instead of the `item_completed` items the Codex
-    clients render. The result is a thread that is listed but cannot be opened: the iOS
-    app shows "Error loading messages", because a completed turn has no items. `codex exec`
-    records `history_mode: paginated` and reads fine everywhere. There is no client-side
-    switch: `capabilities.experimentalApi`, `-c threads.history_mode=paginated`,
-    `--enable paginated_threads` (not a real flag) and `thread/start`'s `config` in two
-    shapes were all tried and all still yield `legacy`. Being readable beats being listed.
-  - The daemon path was checked too and is a dead end for now: the one configuration that
-    ever produced both (`source: vscode` + `history_mode: paginated`) was an app-server
-    running Codex **0.146.0** — the managed daemon, which the official iOS client talks to.
-    Across every local session there are zero `source: vscode` + `paginated` threads on
-    0.148.0, so on the installed version the app-server transport always writes `legacy`.
-    The 0.146.0 binary is gone (cask upgrade), and the daemon's control socket does not
-    answer a plain `initialize`, so there is no version-matched client to reach it with.
-  - **Where an exec thread actually is.** It is listed in *none* of the three places:
-    not Codex Desktop, not the Codex iOS app, and not the default `codex resume` picker —
-    that picker hides non-interactive sessions unless `--include-non-interactive` is
-    passed. It is fully resumable by id though, with history intact (verified:
-    `codex exec resume <id> "..."` recalled its own earlier answer). Because `codex exec`
-    has no `--session-id`, the launch reads the id it prints on startup out of the run log
-    and returns it as `sessionId`, so callers do not have to dig through
-    `~/.codex/sessions`. Do not claim these threads are discoverable without the flag.
-  - **Cheap re-test after a Codex upgrade** — if this combination starts working, switching
-    back is a small change. Run, with no turn so it costs nothing, and look at the result:
-    ```bash
-    codex app-server   # then send, as newline-delimited JSON-RPC on stdin:
-    # {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"clientInfo":{"name":"browsey","version":"1"}}}
-    # {"jsonrpc":"2.0","method":"initialized","params":{}}
-    # {"jsonrpc":"2.0","id":2,"method":"thread/start","params":{"cwd":"<dir>","sandbox":"danger-full-access","approvalPolicy":"never"}}
-    ```
-    `thread.historyMode` in the id-2 response is the whole answer: `paginated` means the
-    app-server route is viable again, `legacy` means stay on `codex exec`.
-  - Codex Desktop also never refreshes its list for a thread created by another process;
-    it appears after the app restarts, or immediately if something opens
-    `codex://threads/<id>` — which drags the app to the foreground, so we do not fire it.
+  - *Codex Desktop* and the Codex iOS app filter on the session's `source`. `codex exec`
+    records `source: exec`, which they treat as automation and never list — no flag or env
+    var changes it (`CODEX_INTERNAL_ORIGINATOR_OVERRIDE` moves `originator` only; `source`
+    is set structurally by the subcommand, and `thread/resume` does not re-stamp it: a
+    resumed thread still carries one `session_meta`). So Codex threads are created over the
+    **app-server protocol** (`codex-app-server.ts`), which records `source: vscode` and
+    `originator: browsey` from our `clientInfo`, and they show up in both Codex clients.
+  - **The turn must be seen through to a clean shutdown.** Killing the app server early
+    truncates the thread — it keeps the user's message and drops the answer — and never
+    closing it leaks one process per launch. The run therefore ends on `turn/completed` by
+    closing stdin, with a 30-minute stop-loss. Two earlier bugs both came from getting this
+    wrong, so do not "simplify" it away.
+  - Known trade-off: this transport records `history_mode: legacy`, so the rollout carries
+    `user_message`/`agent_message` events instead of `item_completed` items. `codex exec`
+    records `paginated`. There is no client-side switch — `capabilities.experimentalApi`,
+    `-c threads.history_mode=paginated`, `--enable paginated_threads` (not a real flag),
+    `thread/start`'s `config` in two shapes, and ChatGPT.app's bundled 0.148.0-alpha.15
+    binary were all tried and all yield `legacy`. Across every local session there are zero
+    `source: vscode` + `paginated` threads on 0.148.0. If a future Codex release changes
+    that, this is a one-minute check: run `codex app-server`, send `initialize` then
+    `thread/start` with no turn, and read `thread.historyMode` from the response.
+  - Codex clients do not refresh their list for a thread created by another process; it
+    appears after the app restarts, or immediately if something opens `codex://threads/<id>`
+    — which drags the app to the foreground, so we do not fire it.
   - Do not write into either desktop app's private state to fake visibility.
 - **Model lists** are curated constants in `agents.ts`; the `Default` label is enriched from
   `~/.claude/settings.json` / `~/.codex/config.toml`. Updating models needs no app release.

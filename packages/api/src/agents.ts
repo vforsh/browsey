@@ -13,6 +13,7 @@ import { homedir } from 'os'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'path'
 import { randomUUID } from 'crypto'
 import { findGitRoot } from './git.js'
+import { CodexAppServerError, startCodexThread } from './codex-app-server.js'
 import type {
   AgentDescriptor,
   AgentFailure,
@@ -32,17 +33,6 @@ const SPAWN_GRACE_MS = 200
 
 /** Bytes of the run log read back to explain a fast failure. */
 const LOG_TAIL_BYTES = 2_000
-
-/**
- * `codex exec` has no `--session-id`, so the only way to hand back an id the
- * user can resume with is to read the one it prints on startup. Without this a
- * Codex thread is unreachable in practice: it is not listed in Codex Desktop,
- * not in the iOS app, and the `codex resume` picker hides non-interactive
- * sessions unless `--include-non-interactive` is passed.
- */
-const CODEX_SESSION_ID_TIMEOUT_MS = 4_000
-const CODEX_SESSION_ID_POLL_MS = 150
-const CODEX_SESSION_ID_RE = /^session id:\s*([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\s*$/m
 
 /** Extra PATH entries — the launchd-managed instance inherits a bare PATH. */
 const EXTRA_PATH_ENTRIES = ['/opt/homebrew/bin', join(homedir(), '.local/bin')]
@@ -376,30 +366,21 @@ export function validateLaunchRequest(body: unknown): ValidatedLaunchRequest {
   }
 }
 
-function buildArgv(
-  agent: AgentId,
+/** Claude only; Codex threads go over the app-server protocol instead. */
+function buildClaudeArgv(
   binary: string,
   finalPrompt: string,
   model: string,
-  sessionId: string | null
+  sessionId: string
 ): string[] {
-  if (agent === 'claude-code') {
-    return [
-      binary,
-      '-p',
-      finalPrompt,
-      '--dangerously-skip-permissions',
-      ...(sessionId ? ['--session-id', sessionId] : []),
-      ...(model ? ['--model', model] : []),
-    ]
-  }
-
   return [
     binary,
-    'exec',
-    '--dangerously-bypass-approvals-and-sandbox',
-    ...(model ? ['-m', model] : []),
+    '-p',
     finalPrompt,
+    '--dangerously-skip-permissions',
+    '--session-id',
+    sessionId,
+    ...(model ? ['--model', model] : []),
   ]
 }
 
@@ -433,28 +414,17 @@ function readFailureReason(logPath: string): string | null {
   }
 }
 
-async function readCodexSessionId(logPath: string): Promise<string | undefined> {
-  const deadline = Date.now() + CODEX_SESSION_ID_TIMEOUT_MS
-  for (;;) {
-    try {
-      const match = CODEX_SESSION_ID_RE.exec(readFileSync(logPath, 'utf-8'))
-      if (match?.[1]) return match[1]
-    } catch {
-      // The log may not exist yet; keep waiting until the deadline.
-    }
-    if (Date.now() >= deadline) return undefined
-    await new Promise((resolve) => setTimeout(resolve, CODEX_SESSION_ID_POLL_MS))
-  }
-}
-
 export type SpawnedThread = {
-  /** Claude: the minted `--resume` id. Codex: the id it printed on startup. */
-  sessionId?: string
+  /** Claude: the minted `--resume` id. Codex: the app-server thread id. */
+  sessionId: string
 }
 
 /**
- * Detached and unref'd so threads survive browsey restarts. Argv is passed as an
- * array (never a shell), so prompt and selection carry no injection surface.
+ * Argv is passed as an array (never a shell), so prompt and selection carry no
+ * injection surface. Claude runs fully detached and survives a browsey restart;
+ * Codex is driven over the app-server protocol, so its thread is tied to this
+ * process for the duration of the turn — the cost of being visible in Codex
+ * Desktop, which ignores `codex exec` runs entirely.
  */
 export async function spawnAgentThread({
   agent,
@@ -472,41 +442,67 @@ export async function spawnAgentThread({
     throw new AgentLaunchError(422, `${AGENT_DEFINITIONS[agent].command} CLI not found on server`)
   }
 
-  // Minting the session id keeps the run resumable with `claude --resume <uuid>`
-  // even though stdout is discarded. Codex has no equivalent flag.
-  const sessionId = agent === 'claude-code' ? randomUUID() : null
-  const argv = buildArgv(agent, binary, finalPrompt, model, sessionId)
   const { fd: logFd, path: logPath } = openRunLog(agent)
   const command = AGENT_DEFINITIONS[agent].command
+  const env = { ...process.env, PATH: augmentedPath(), ...AGENT_DEFINITIONS[agent].env }
+
+  /**
+   * The launch stays fire-and-forget, but the outcome is not thrown away:
+   * whatever the run reports on the way out is remembered for the next
+   * capabilities call, so a stale login shows up where the agent is chosen
+   * instead of silently producing threads that never ran.
+   */
+  const watchOutcome = (child: ReturnType<typeof spawn>) => {
+    child.once('exit', (code) => {
+      if (code === 0) {
+        lastFailures.delete(agent)
+      } else {
+        lastFailures.set(agent, {
+          at: new Date().toISOString(),
+          reason:
+            readFailureReason(logPath) ?? `${command} exited with code ${code ?? 'unknown'}`,
+        })
+      }
+      closeSync(logFd)
+    })
+  }
+
+  if (agent === 'codex') {
+    try {
+      const { threadId, child } = await startCodexThread({
+        binary,
+        cwd,
+        prompt: finalPrompt,
+        model,
+        logFd,
+        env,
+      })
+      watchOutcome(child)
+      child.unref()
+      return { sessionId: threadId }
+    } catch (error) {
+      closeSync(logFd)
+      if (error instanceof CodexAppServerError) {
+        throw new AgentLaunchError(422, error.message)
+      }
+      const message = error instanceof Error ? error.message : String(error)
+      throw new AgentLaunchError(500, `Failed to start ${command}: ${message}`)
+    }
+  }
+
+  // Minting the session id keeps the run resumable with `claude --resume <uuid>`
+  // even though stdout is discarded.
+  const sessionId = randomUUID()
+  const argv = buildClaudeArgv(binary, finalPrompt, model, sessionId)
 
   try {
     const child = spawn(argv[0]!, argv.slice(1), {
       cwd,
       detached: true,
       stdio: ['ignore', logFd, logFd],
-      env: {
-        ...process.env,
-        PATH: augmentedPath(),
-        ...AGENT_DEFINITIONS[agent].env,
-      },
+      env,
     })
-
-    // The launch stays fire-and-forget, but the outcome is not thrown away:
-    // whatever the run reports on the way out is remembered for the next
-    // capabilities call, so a stale login shows up where the agent is chosen
-    // instead of silently producing threads that never ran.
-    child.once('exit', (code) => {
-      if (code === 0) {
-        lastFailures.delete(agent)
-        return
-      }
-      lastFailures.set(agent, {
-        at: new Date().toISOString(),
-        reason:
-          readFailureReason(logPath) ??
-          `${command} exited with code ${code ?? 'unknown'}`,
-      })
-    })
+    watchOutcome(child)
 
     await new Promise<void>((resolveSpawn, rejectSpawn) => {
       const onError = (error: Error) => {
@@ -521,17 +517,11 @@ export async function spawnAgentThread({
     })
 
     child.unref()
-    if (sessionId) return { sessionId }
-
-    // Codex prints its id a beat after start; the child is already detached, so
-    // this only delays the reply, never the run.
-    const codexSessionId = await readCodexSessionId(logPath)
-    return codexSessionId ? { sessionId: codexSessionId } : {}
+    return { sessionId }
   } catch (error) {
+    closeSync(logFd)
     if (error instanceof AgentLaunchError) throw error
     const message = error instanceof Error ? error.message : String(error)
     throw new AgentLaunchError(500, `Failed to start ${command}: ${message}`)
-  } finally {
-    closeSync(logFd)
   }
 }
