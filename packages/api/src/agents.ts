@@ -57,10 +57,9 @@ const AGENT_DEFINITIONS: Record<AgentId, AgentDefinition> = {
     command: 'claude',
     models: [
       { id: '', label: 'Default' },
-      { id: 'sonnet', label: 'Sonnet' },
-      { id: 'opus', label: 'Opus' },
       { id: 'fable', label: 'Fable' },
-      { id: 'haiku', label: 'Haiku' },
+      { id: 'opus', label: 'Opus' },
+      { id: 'sonnet', label: 'Sonnet' },
     ],
     defaultModelFile: join(homedir(), '.claude/settings.json'),
     readDefaultModel: (contents) => {
