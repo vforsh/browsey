@@ -47,6 +47,7 @@ browsey/
     │       ├── agents.ts      # Agent thread launch (capabilities, cwd resolution, spawn)
     │       ├── codex-app-server.ts   # Codex app-server JSON-RPC client + thread start
     │       ├── codex-thread-title.ts # Two-phase Codex thread titling (slice, then generated)
+    │       ├── codex-model-catalogue.ts # Cached `model/list` read for per-model reasoning levels
     │       └── live-reload.ts # SSE live reload
     ├── app/                  # @vforsh/browsey-app
     │   ├── package.json
@@ -129,8 +130,8 @@ browsey pair [target]                 # --url <url>, --name <name>
 | `GET /api/git/commit?path=/&hash=<sha>` | Git commit details, stats, navigation, and changed files (`includeAdjacent=0` skips navigation lookup) |
 | `POST /api/git/revert` | Discard changes for one git file |
 | `GET /api/reload` | SSE live reload (watch mode) |
-| `GET /api/agents?path=/` | Agent capabilities (installed CLIs, curated model lists, live sessions; `path` adds the cwd a launch would resolve to) — **bearer token required** |
-| `POST /api/agents/launch` | Launch a Codex thread or open a Claude session — **bearer token required** |
+| `GET /api/agents?path=/` | Agent capabilities (installed CLIs, curated model lists with the reasoning levels each model accepts, live sessions; `path` adds the cwd a launch would resolve to) — **bearer token required** |
+| `POST /api/agents/launch` | Launch a Codex thread or open a Claude session, optionally at a given `model` and `effort` — **bearer token required** |
 | `POST /api/agents/stop` | End a live Claude session by `sessionId` — **bearer token required** |
 
 ## Key Patterns
@@ -141,6 +142,11 @@ browsey pair [target]                 # --url <url>, --name <name>
 - **API base URL**: Injected at serve time via `window.__BROWSEY_API_BASE__` in HTML
 - **Cross-package imports**: Use package names (`@vforsh/browsey-shared`); intra-package use relative paths
 - **Build process**: Frontend bundled as IIFE, inlined into server as constants via `define`
+
+### Agent Threads
+- **Reasoning levels are per model, not per agent**: Codex models advertise different sets (`ultra` exists on sol/terra but not luna), so `AgentModelOption.efforts` hangs off each model and `/api/agents/launch` validates `effort` against the chosen model
+- **The Codex catalogue is never awaited**: `codex-model-catalogue.ts` refreshes from `model/list` in the background and serves a fallback list until it lands — a cold app-server takes tens of seconds and no request may wait on it
+- **Codex effort rides on `turn/start`**: `thread/start` has no such parameter, and the turn's value is documented as applying to subsequent turns too, so a thread picked up later in Desktop or on the phone stays at the chosen level
 
 ### Security
 - **Path traversal prevention**: All paths go through `resolveSafePath()` in shared package

@@ -207,12 +207,15 @@ export async function startClaudeSession({
   binary,
   cwd,
   model,
+  effort,
   logFd,
   env,
 }: {
   binary: string
   cwd: string
   model: string
+  /** Empty string omits the flag, leaving the level to Claude's own config. */
+  effort: string
   logFd: number
   env: NodeJS.ProcessEnv
 }): Promise<StartedClaudeSession> {
@@ -232,6 +235,7 @@ export async function startClaudeSession({
     '--permission-mode',
     'bypassPermissions',
     ...(model ? ['--model', model] : []),
+    ...(effort ? ['--effort', effort] : []),
   ]
 
   const child = spawn(argv[0]!, argv.slice(1), {

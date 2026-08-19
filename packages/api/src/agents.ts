@@ -15,12 +15,19 @@ import { findGitRoot } from './git.js'
 import { CodexAppServerError, startCodexThread } from './codex-app-server.js'
 import { nameCodexThread } from './codex-thread-title.js'
 import {
+  FALLBACK_EFFORT_IDS,
+  cachedEffortCatalogue,
+  effortOption,
+  type EffortCatalogue,
+} from './codex-model-catalogue.js'
+import {
   ClaudeRemoteControlError,
   listClaudeSessions,
   startClaudeSession,
 } from './claude-remote-control.js'
 import type {
   AgentDescriptor,
+  AgentEffortOption,
   AgentLaunchMode,
   AgentSession,
   AgentFailure,
@@ -57,6 +64,21 @@ export class AgentLaunchError extends Error {
   }
 }
 
+/** The Default chip, on every list: omit the flag and let the CLI decide. */
+const DEFAULT_OPTION = { id: '', label: 'Default' } as const
+
+/** Levels `claude --effort` accepts. Flat: the CLI takes the same set always. */
+const CLAUDE_EFFORT_IDS = ['low', 'medium', 'high', 'xhigh', 'max']
+
+type CuratedModel = { id: string; label: string }
+
+type EffortContext = {
+  /** Null until the CLI's catalogue has been read at least once. */
+  catalogue: EffortCatalogue | null
+  /** What an omitted model flag resolves to, so Default can be looked up too. */
+  defaultModel: string | null
+}
+
 type AgentDefinition = {
   id: AgentId
   name: string
@@ -66,15 +88,36 @@ type AgentDefinition = {
   knownBinPaths: string[]
   command: string
   /** Curated model list. The leading empty id means "omit the model flag". */
-  models: AgentModelOption[]
+  models: CuratedModel[]
+  /** Levels to offer for one model, from whatever the catalogue could supply. */
+  resolveEfforts: (modelId: string, context: EffortContext) => AgentEffortOption[]
+  /** Reads what the CLI advertises per model. Cached, and never awaited. */
+  loadEffortCatalogue?: (
+    binary: string | null,
+    env: NodeJS.ProcessEnv
+  ) => EffortCatalogue | null
   /** Config file read (best effort) to label the default model. */
   defaultModelFile: string
   readDefaultModel: (contents: string) => string | null
+  /** Same file, for the level the CLI falls back on. Null when it says nothing. */
+  readDefaultEffort: (contents: string) => string | null
   /** Env forced on every run of this agent, overriding anything inherited. */
   env?: Record<string, string>
   launchMode: AgentLaunchMode
   /** Only `session` agents have anything to list. */
   listSessions?: () => AgentSession[]
+}
+
+/** A bare `key = "value"` in a TOML file's preamble, before any [section]. */
+function readTopLevelString(contents: string, key: string): string | null {
+  const pattern = new RegExp(`^${key}\\s*=\\s*["'](.+?)["']\\s*$`)
+  for (const line of contents.split('\n')) {
+    const trimmed = line.trim()
+    if (trimmed.startsWith('[')) break
+    const match = pattern.exec(trimmed)
+    if (match?.[1]) return match[1]
+  }
+  return null
 }
 
 const AGENT_DEFINITIONS: Record<AgentId, AgentDefinition> = {
@@ -94,16 +137,21 @@ const AGENT_DEFINITIONS: Record<AgentId, AgentDefinition> = {
     // a shell running inside Claude Code exports it, a launchd job does not.
     env: { CLAUDE_CODE_ENTRYPOINT: 'claude-desktop' },
     models: [
-      { id: '', label: 'Default' },
+      DEFAULT_OPTION,
       { id: 'fable', label: 'Fable' },
       { id: 'opus', label: 'Opus' },
       { id: 'sonnet', label: 'Sonnet' },
     ],
+    // Claude advertises nothing per model; `--effort` documents the whole set.
+    resolveEfforts: () => CLAUDE_EFFORT_IDS.map((id) => effortOption(id)),
     defaultModelFile: join(homedir(), '.claude/settings.json'),
     readDefaultModel: (contents) => {
       const parsed = JSON.parse(contents) as { model?: unknown }
       return typeof parsed.model === 'string' ? parsed.model : null
     },
+    // Claude Code keeps the session's effort out of settings.json, so there is
+    // nothing to read and Default goes uncaptioned rather than guessed at.
+    readDefaultEffort: () => null,
   },
   codex: {
     id: 'codex',
@@ -113,22 +161,23 @@ const AGENT_DEFINITIONS: Record<AgentId, AgentDefinition> = {
     command: 'codex',
     launchMode: 'prompt',
     models: [
-      { id: '', label: 'Default' },
+      DEFAULT_OPTION,
       { id: 'gpt-5.6-sol', label: 'gpt-5.6-sol' },
       { id: 'gpt-5.6-terra', label: 'gpt-5.6-terra' },
       { id: 'gpt-5.6-luna', label: 'gpt-5.6-luna' },
     ],
-    defaultModelFile: join(homedir(), '.codex/config.toml'),
-    readDefaultModel: (contents) => {
-      // Top-level `model = "..."`, before any [section] header.
-      for (const line of contents.split('\n')) {
-        const trimmed = line.trim()
-        if (trimmed.startsWith('[')) break
-        const match = /^model\s*=\s*["'](.+?)["']\s*$/.exec(trimmed)
-        if (match?.[1]) return match[1]
-      }
-      return null
+    // Each model advertises its own levels, and they differ — `ultra` is not on
+    // all of them. Before the catalogue has been read, the set every model has
+    // in common stands in, so the row is never empty and never wrong.
+    resolveEfforts: (modelId, { catalogue, defaultModel }) => {
+      const resolved = modelId || defaultModel
+      const advertised = resolved ? catalogue?.get(resolved) : null
+      return advertised ?? FALLBACK_EFFORT_IDS.map((id) => effortOption(id))
     },
+    loadEffortCatalogue: cachedEffortCatalogue,
+    defaultModelFile: join(homedir(), '.codex/config.toml'),
+    readDefaultModel: (contents) => readTopLevelString(contents, 'model'),
+    readDefaultEffort: (contents) => readTopLevelString(contents, 'model_reasoning_effort'),
   },
 }
 
@@ -169,22 +218,63 @@ export function resolveAgentBinary(agent: AgentId): string | null {
   return found && isExecutable(found) ? found : null
 }
 
-/** Best effort: the CLI's own configured model, so the app can label "Default". */
-function resolveDefaultModel(definition: AgentDefinition): string | null {
+/** Env every child of this agent gets, and that reading its config needs too. */
+function agentEnv(definition: AgentDefinition): NodeJS.ProcessEnv {
+  return { ...process.env, PATH: augmentedPath(), ...definition.env }
+}
+
+/**
+ * Best effort: what the CLI's own config says it falls back on, so the app can
+ * caption "Default" with a value instead of leaving it a mystery.
+ */
+function readDefaults(definition: AgentDefinition): {
+  model: string | null
+  effort: string | null
+} {
   try {
-    return definition.readDefaultModel(readFileSync(definition.defaultModelFile, 'utf-8'))
+    const contents = readFileSync(definition.defaultModelFile, 'utf-8')
+    return {
+      model: definition.readDefaultModel(contents),
+      effort: definition.readDefaultEffort(contents),
+    }
   } catch {
-    return null
+    return { model: null, effort: null }
   }
 }
 
+/**
+ * Effort lists hang off each model rather than the agent, because that is where
+ * they actually differ. Building them is deliberately cheap — the catalogue read
+ * behind `loadEffortCatalogue` is cached and never awaited, so a capabilities
+ * call stays as fast as it was before any of this existed.
+ */
+function describeModels(
+  definition: AgentDefinition,
+  binary: string | null,
+  defaultModel: string | null
+): AgentModelOption[] {
+  const context: EffortContext = {
+    catalogue: definition.loadEffortCatalogue?.(binary, agentEnv(definition)) ?? null,
+    defaultModel,
+  }
+
+  return definition.models.map((model) => ({
+    ...model,
+    efforts: [DEFAULT_OPTION, ...definition.resolveEfforts(model.id, context)],
+  }))
+}
+
 function describeAgent(definition: AgentDefinition, targetCwd: string | null): AgentDescriptor {
+  const binary = resolveAgentBinary(definition.id)
+  const defaults = readDefaults(definition)
+
   return {
     id: definition.id,
     name: definition.name,
-    installed: resolveAgentBinary(definition.id) !== null,
-    models: definition.models,
-    defaultModel: resolveDefaultModel(definition),
+    installed: binary !== null,
+    models: describeModels(definition, binary, defaults.model),
+    defaultModel: defaults.model,
+    defaultEffort: defaults.effort,
     lastFailure: lastFailures.get(definition.id) ?? null,
     launchMode: definition.launchMode,
     sessions: definition.listSessions?.() ?? [],
@@ -344,6 +434,7 @@ export type ValidatedLaunchRequest = {
   agent: AgentId
   prompt: string
   model: string
+  effort: string
   target: AgentLaunchTarget
 }
 
@@ -352,7 +443,7 @@ export function validateLaunchRequest(body: unknown): ValidatedLaunchRequest {
     throw new AgentLaunchError(400, 'Invalid request body')
   }
 
-  const { agent, prompt, model, target } = body as Partial<AgentLaunchRequest>
+  const { agent, prompt, model, effort, target } = body as Partial<AgentLaunchRequest>
 
   if (!isAgentId(agent)) {
     throw new AgentLaunchError(400, 'Unknown agent')
@@ -379,6 +470,24 @@ export function validateLaunchRequest(body: unknown): ValidatedLaunchRequest {
     throw new AgentLaunchError(400, `Unknown model "${resolvedModel}" for ${agent}`)
   }
 
+  const resolvedEffort = effort ?? ''
+  if (typeof resolvedEffort !== 'string') {
+    throw new AgentLaunchError(400, 'effort must be a string')
+  }
+  // Checked against the chosen model, not the agent: a level one model advertises
+  // is not one another accepts, and the CLI would only reject it later and worse.
+  if (resolvedEffort) {
+    const model = describeAgent(AGENT_DEFINITIONS[agent], null).models.find(
+      (option) => option.id === resolvedModel
+    )
+    if (!model?.efforts.some((option) => option.id === resolvedEffort)) {
+      throw new AgentLaunchError(
+        400,
+        `Unknown effort "${resolvedEffort}" for ${agent} ${resolvedModel || 'default model'}`
+      )
+    }
+  }
+
   if (!target || typeof target !== 'object') {
     throw new AgentLaunchError(400, 'target is required')
   }
@@ -402,6 +511,7 @@ export function validateLaunchRequest(body: unknown): ValidatedLaunchRequest {
     agent,
     prompt: wantsPrompt ? rawPrompt.trim() : '',
     model: resolvedModel,
+    effort: resolvedEffort,
     target: { kind, path, ...(kind === 'selection' ? { selection } : {}) },
   }
 }
@@ -463,11 +573,14 @@ export async function spawnAgentThread({
   cwd,
   finalPrompt,
   model,
+  effort,
 }: {
   agent: AgentId
   cwd: string
   finalPrompt: string
   model: string
+  /** Empty string leaves the level to the CLI's own configuration. */
+  effort: string
 }): Promise<SpawnedThread> {
   const binary = resolveAgentBinary(agent)
   if (!binary) {
@@ -476,7 +589,7 @@ export async function spawnAgentThread({
 
   const { fd: logFd, path: logPath } = openRunLog(agent)
   const command = AGENT_DEFINITIONS[agent].command
-  const env = { ...process.env, PATH: augmentedPath(), ...AGENT_DEFINITIONS[agent].env }
+  const env = agentEnv(AGENT_DEFINITIONS[agent])
 
   // Both the exit handler and the failure path want to close the log, and only
   // one of them may actually do it.
@@ -519,6 +632,7 @@ export async function spawnAgentThread({
         cwd,
         prompt: finalPrompt,
         model,
+        effort,
         logFd,
         env,
       })
@@ -539,7 +653,7 @@ export async function spawnAgentThread({
     // No exit is watched: the session is meant to sit idle until somebody talks
     // to it, so an exit code says nothing about its health. A session that never
     // registers throws instead, and that surfaces at the launch call.
-    const { session } = await startClaudeSession({ binary, cwd, model, logFd, env })
+    const { session } = await startClaudeSession({ binary, cwd, model, effort, logFd, env })
     closeLog()
     return { sessionId: session.sessionId, url: session.url ?? undefined }
   } catch (error) {

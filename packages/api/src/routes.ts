@@ -354,7 +354,7 @@ async function handleAgentLaunch(req: Request, options: ApiRoutesOptions): Promi
   }
 
   try {
-    const { agent, prompt, model, target } = validateLaunchRequest(body)
+    const { agent, prompt, model, effort, target } = validateLaunchRequest(body)
 
     // The target still has to sit inside the served root even though the
     // resolved cwd may legitimately land above it.
@@ -385,7 +385,13 @@ async function handleAgentLaunch(req: Request, options: ApiRoutesOptions): Promi
       selection: target.selection,
     })
 
-    const { sessionId, url } = await spawnAgentThread({ agent, cwd, finalPrompt, model })
+    const { sessionId, url } = await spawnAgentThread({
+      agent,
+      cwd,
+      finalPrompt,
+      model,
+      effort,
+    })
 
     const response: AgentLaunchResponse = {
       launched: true,

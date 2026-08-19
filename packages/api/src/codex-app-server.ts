@@ -255,6 +255,7 @@ export async function startCodexThread({
   cwd,
   prompt,
   model,
+  effort,
   logFd,
   env,
 }: {
@@ -263,6 +264,8 @@ export async function startCodexThread({
   prompt: string
   /** Empty string leaves the model to the CLI's own configuration. */
   model: string
+  /** Empty string leaves the reasoning level to the CLI's own configuration. */
+  effort: string
   logFd: number
   env: NodeJS.ProcessEnv
 }): Promise<StartedCodexThread> {
@@ -294,9 +297,17 @@ export async function startCodexThread({
       throw new CodexAppServerError('codex started a thread without an id')
     }
 
+    // Effort rides on the turn rather than the thread, because `thread/start`
+    // has no such parameter — and the turn's version sticks: Codex documents it
+    // as applying to "this turn and subsequent turns", so a thread picked up
+    // later in Desktop or on the phone continues at the level that was chosen.
     await request(
       'turn/start',
-      { threadId, input: [{ type: 'text', text: prompt }] },
+      {
+        threadId,
+        input: [{ type: 'text', text: prompt }],
+        ...(effort ? { effort } : {}),
+      },
       THREAD_TIMEOUT_MS
     )
 
