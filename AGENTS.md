@@ -180,6 +180,18 @@ Browsey spawns a detached process and responds immediately; results are picked u
   last non-zero exit per agent in `lastFailures`, and `GET /api/agents` reports it as
   `lastFailure` so the app can warn where the agent is chosen. A clean exit clears it.
   In memory only — it describes machine state, so losing it on restart is correct.
+- **Desktop-app visibility differs per agent, and this is settled — do not re-investigate.**
+  Claude Code's desktop app reads the same on-disk transcript store the CLI writes and
+  filters on the session's recorded surface, so `CLAUDE_CODE_ENTRYPOINT=claude-desktop`
+  is forced on every Claude run and threads show up there. Codex Desktop (which lives
+  inside `ChatGPT.app`) does **not** read from disk — it keeps its own thread index in
+  `~/.codex/.codex-global-state.json`, populated only by threads created in its own UI.
+  Measured across 3697 local sessions: of 13 originators, only `Codex Desktop` appears in
+  that index (363 of them); `codex_cli_rs`, `codex_exec`, `codex_vscode` and even
+  OpenAI's own `codex_chatgpt_ios_remote` are all at zero. No flag, env var, originator
+  override or app-server route changes this, so Codex threads are terminal-resumable
+  (`codex resume`) by design — same as any thread started by typing `codex`. Never write
+  into the desktop app's private state to fake it.
 - **Model lists** are curated constants in `agents.ts`; the `Default` label is enriched from
   `~/.claude/settings.json` / `~/.codex/config.toml`. Updating models needs no app release.
 
