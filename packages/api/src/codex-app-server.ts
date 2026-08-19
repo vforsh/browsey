@@ -15,13 +15,7 @@ import { writeSync } from 'fs'
 const INITIALIZE_TIMEOUT_MS = 15_000
 const THREAD_TIMEOUT_MS = 30_000
 
-/**
- * The turn has to be seen through to a clean shutdown. Killing the app server
- * early truncates the thread — it keeps the user's message and loses the answer —
- * and never closing it leaks one process per launch. So the run ends on
- * `turn/completed` by closing stdin, with a long stop-loss in case that
- * notification never arrives.
- */
+/** Stop-loss for a `turn/completed` that never arrives; see endOnTurnCompletion. */
 const TURN_ABANDON_MS = 30 * 60_000
 
 /**
@@ -57,10 +51,27 @@ function createReader(
   stdout: NonNullable<ReturnType<typeof spawn>['stdout']>,
   logFd: number
 ) {
-  const pending: JsonRpcMessage[] = []
+  /** Responses that arrived before anyone awaited them. */
+  const unclaimed = new Map<number, JsonRpcMessage>()
+  const waiting = new Map<number, (message: JsonRpcMessage) => void>()
   const notificationHandlers = new Map<string, () => void>()
-  let waiter: (() => void) | null = null
   let buffer = ''
+
+  const deliver = (message: JsonRpcMessage) => {
+    // Notifications are dispatched and dropped, so a long run cannot accumulate
+    // them; responses wait to be claimed by id.
+    if (message.id === undefined) {
+      if (message.method) notificationHandlers.get(message.method)?.()
+      return
+    }
+    const waiter = waiting.get(message.id)
+    if (waiter) {
+      waiting.delete(message.id)
+      waiter(message)
+    } else {
+      unclaimed.set(message.id, message)
+    }
+  }
 
   stdout.on('data', (chunk: Buffer) => {
     try {
@@ -68,50 +79,38 @@ function createReader(
     } catch {
       // The log is a debugging aid; losing it must not kill the run.
     }
+
     buffer += chunk.toString('utf-8')
-    let newline = buffer.indexOf('\n')
-    while (newline !== -1) {
-      const line = buffer.slice(0, newline).trim()
-      buffer = buffer.slice(newline + 1)
-      if (line) {
-        try {
-          const message = JSON.parse(line) as JsonRpcMessage
-          // Responses are awaited by id; notifications are dispatched and
-          // dropped, so a long run cannot accumulate them.
-          if (message.id !== undefined) pending.push(message)
-          else if (message.method) notificationHandlers.get(message.method)?.()
-        } catch {
-          // Non-JSON diagnostics land in the log and are otherwise ignored.
-        }
+    const lines = buffer.split('\n')
+    buffer = lines.pop() ?? ''
+    for (const line of lines) {
+      if (!line.trim()) continue
+      try {
+        deliver(JSON.parse(line) as JsonRpcMessage)
+      } catch {
+        // Non-JSON diagnostics land in the log and are otherwise ignored.
       }
-      newline = buffer.indexOf('\n')
     }
-    waiter?.()
   })
 
-  async function awaitResponse(id: number, timeoutMs: number): Promise<JsonRpcMessage> {
-    const deadline = Date.now() + timeoutMs
-    for (;;) {
-      const index = pending.findIndex((message) => message.id === id)
-      if (index !== -1) return pending.splice(index, 1)[0]!
-
-      const remaining = deadline - Date.now()
-      if (remaining <= 0) {
-        throw new CodexAppServerError(`codex app-server did not answer request ${id} in time`)
-      }
-      await new Promise<void>((resolve) => {
-        const timer = setTimeout(resolve, remaining)
-        waiter = () => {
-          clearTimeout(timer)
-          waiter = null
-          resolve()
-        }
-      })
-    }
-  }
-
   return {
-    awaitResponse,
+    awaitResponse(id: number, timeoutMs: number): Promise<JsonRpcMessage> {
+      const already = unclaimed.get(id)
+      if (already) {
+        unclaimed.delete(id)
+        return Promise.resolve(already)
+      }
+      return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+          waiting.delete(id)
+          reject(new CodexAppServerError(`codex app-server did not answer request ${id} in time`))
+        }, timeoutMs)
+        waiting.set(id, (message) => {
+          clearTimeout(timer)
+          resolve(message)
+        })
+      })
+    },
     onNotification(method: string, handler: () => void) {
       notificationHandlers.set(method, handler)
     },
@@ -126,6 +125,36 @@ function resultOf(message: JsonRpcMessage, what: string): Record<string, unknown
     throw new CodexAppServerError(`codex returned no result for ${what}`)
   }
   return message.result as Record<string, unknown>
+}
+
+/**
+ * Ends the app server once the turn is done. Killing it early truncates the
+ * thread — it keeps the user's message and loses the answer — and never closing
+ * it leaks one process per launch, so both the notification and a stop-loss
+ * timer lead to the same clean stdin close.
+ */
+function endOnTurnCompletion(
+  child: ReturnType<typeof spawn>,
+  onNotification: (method: string, handler: () => void) => void
+) {
+  let closed = false
+  const closeStdin = () => {
+    if (closed) return
+    closed = true
+    try {
+      child.stdin?.end()
+    } catch {
+      // Already gone; the exit handler still runs.
+    }
+  }
+
+  const stopLoss = setTimeout(closeStdin, TURN_ABANDON_MS)
+  stopLoss.unref?.()
+  onNotification('turn/completed', () => {
+    clearTimeout(stopLoss)
+    closeStdin()
+  })
+  child.once('exit', () => clearTimeout(stopLoss))
 }
 
 export async function startCodexThread({
@@ -155,28 +184,39 @@ export async function startCodexThread({
     throw new CodexAppServerError('codex app-server gave no stdio pipes')
   }
 
+  const stdin = child.stdin
   const { awaitResponse, onNotification } = createReader(child.stdout, logFd)
+
+  let nextId = 0
   const send = (message: Record<string, unknown>) => {
-    child.stdin!.write(`${JSON.stringify(message)}\n`)
+    stdin.write(`${JSON.stringify(message)}\n`)
+  }
+  const notify = (method: string, params: Record<string, unknown>) => {
+    send({ jsonrpc: '2.0', method, params })
+  }
+  const request = async (
+    method: string,
+    params: Record<string, unknown>,
+    timeoutMs: number
+  ): Promise<Record<string, unknown>> => {
+    const id = ++nextId
+    send({ jsonrpc: '2.0', id, method, params })
+    return resultOf(await awaitResponse(id, timeoutMs), method)
   }
 
-  send({
-    jsonrpc: '2.0',
-    id: 1,
-    method: 'initialize',
-    params: { clientInfo: { name: CLIENT_NAME, title: 'Browsey', version: '1' } },
-  })
-  resultOf(await awaitResponse(1, INITIALIZE_TIMEOUT_MS), 'initialize')
-  send({ jsonrpc: '2.0', method: 'initialized', params: {} })
+  await request(
+    'initialize',
+    { clientInfo: { name: CLIENT_NAME, title: 'Browsey', version: '1' } },
+    INITIALIZE_TIMEOUT_MS
+  )
+  notify('initialized', {})
 
-  // Mirrors `--dangerously-bypass-approvals-and-sandbox`: threads launched from
-  // the phone get the same full access the CLI path gave them.
-  send({
-    jsonrpc: '2.0',
-    id: 2,
-    method: 'thread/start',
-    params: {
+  const started = await request(
+    'thread/start',
+    {
       cwd,
+      // Mirrors `--dangerously-bypass-approvals-and-sandbox`: threads launched
+      // from the phone get the same full access the CLI path gave them.
       sandbox: 'danger-full-access',
       approvalPolicy: 'never',
       // These are person-initiated threads, not subagent spawns — same value the
@@ -184,40 +224,22 @@ export async function startCodexThread({
       threadSource: 'user',
       ...(model ? { model } : {}),
     },
-  })
-  const started = resultOf(await awaitResponse(2, THREAD_TIMEOUT_MS), 'thread/start')
+    THREAD_TIMEOUT_MS
+  )
+
   const thread = started.thread as { id?: unknown } | undefined
   const threadId = typeof thread?.id === 'string' ? thread.id : null
   if (!threadId) {
     throw new CodexAppServerError('codex started a thread without an id')
   }
 
-  send({
-    jsonrpc: '2.0',
-    id: 3,
-    method: 'turn/start',
-    params: { threadId, input: [{ type: 'text', text: prompt }] },
-  })
-  resultOf(await awaitResponse(3, THREAD_TIMEOUT_MS), 'turn/start')
+  await request(
+    'turn/start',
+    { threadId, input: [{ type: 'text', text: prompt }] },
+    THREAD_TIMEOUT_MS
+  )
 
-  // The reply goes back to the phone now; the shutdown is seen through here.
-  let closed = false
-  const closeStdin = () => {
-    if (closed) return
-    closed = true
-    try {
-      child.stdin?.end()
-    } catch {
-      // Already gone; the exit handler still runs.
-    }
-  }
-  const abandon = setTimeout(closeStdin, TURN_ABANDON_MS)
-  abandon.unref?.()
-  onNotification('turn/completed', () => {
-    clearTimeout(abandon)
-    closeStdin()
-  })
-  child.once('exit', () => clearTimeout(abandon))
+  endOnTurnCompletion(child, onNotification)
 
   return { threadId, child }
 }

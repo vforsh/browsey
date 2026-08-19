@@ -414,6 +414,28 @@ function readFailureReason(logPath: string): string | null {
   }
 }
 
+function toLaunchError(error: unknown, command: string): AgentLaunchError {
+  if (error instanceof AgentLaunchError) return error
+  if (error instanceof CodexAppServerError) return new AgentLaunchError(422, error.message)
+  const message = error instanceof Error ? error.message : String(error)
+  return new AgentLaunchError(500, `Failed to start ${command}: ${message}`)
+}
+
+/** Resolves once the spawn has had a chance to fail with ENOENT and friends. */
+function awaitSpawn(child: ReturnType<typeof spawn>): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const onError = (error: Error) => {
+      clearTimeout(timer)
+      reject(error)
+    }
+    const timer = setTimeout(() => {
+      child.removeListener('error', onError)
+      resolve()
+    }, SPAWN_GRACE_MS)
+    child.once('error', onError)
+  })
+}
+
 export type SpawnedThread = {
   /** Claude: the minted `--resume` id. Codex: the app-server thread id. */
   sessionId: string
@@ -446,6 +468,19 @@ export async function spawnAgentThread({
   const command = AGENT_DEFINITIONS[agent].command
   const env = { ...process.env, PATH: augmentedPath(), ...AGENT_DEFINITIONS[agent].env }
 
+  // Both the exit handler and the failure path want to close the log, and only
+  // one of them may actually do it.
+  let logClosed = false
+  const closeLog = () => {
+    if (logClosed) return
+    logClosed = true
+    try {
+      closeSync(logFd)
+    } catch {
+      // Nothing left to do if the descriptor is already gone.
+    }
+  }
+
   /**
    * The launch stays fire-and-forget, but the outcome is not thrown away:
    * whatever the run reports on the way out is remembered for the next
@@ -463,12 +498,12 @@ export async function spawnAgentThread({
             readFailureReason(logPath) ?? `${command} exited with code ${code ?? 'unknown'}`,
         })
       }
-      closeSync(logFd)
+      closeLog()
     })
   }
 
-  if (agent === 'codex') {
-    try {
+  try {
+    if (agent === 'codex') {
       const { threadId, child } = await startCodexThread({
         binary,
         cwd,
@@ -480,22 +515,12 @@ export async function spawnAgentThread({
       watchOutcome(child)
       child.unref()
       return { sessionId: threadId }
-    } catch (error) {
-      closeSync(logFd)
-      if (error instanceof CodexAppServerError) {
-        throw new AgentLaunchError(422, error.message)
-      }
-      const message = error instanceof Error ? error.message : String(error)
-      throw new AgentLaunchError(500, `Failed to start ${command}: ${message}`)
     }
-  }
 
-  // Minting the session id keeps the run resumable with `claude --resume <uuid>`
-  // even though stdout is discarded.
-  const sessionId = randomUUID()
-  const argv = buildClaudeArgv(binary, finalPrompt, model, sessionId)
-
-  try {
+    // Minting the session id keeps the run resumable with `claude --resume <uuid>`
+    // even though stdout is discarded.
+    const sessionId = randomUUID()
+    const argv = buildClaudeArgv(binary, finalPrompt, model, sessionId)
     const child = spawn(argv[0]!, argv.slice(1), {
       cwd,
       detached: true,
@@ -503,25 +528,11 @@ export async function spawnAgentThread({
       env,
     })
     watchOutcome(child)
-
-    await new Promise<void>((resolveSpawn, rejectSpawn) => {
-      const onError = (error: Error) => {
-        clearTimeout(timer)
-        rejectSpawn(error)
-      }
-      const timer = setTimeout(() => {
-        child.removeListener('error', onError)
-        resolveSpawn()
-      }, SPAWN_GRACE_MS)
-      child.once('error', onError)
-    })
-
+    await awaitSpawn(child)
     child.unref()
     return { sessionId }
   } catch (error) {
-    closeSync(logFd)
-    if (error instanceof AgentLaunchError) throw error
-    const message = error instanceof Error ? error.message : String(error)
-    throw new AgentLaunchError(500, `Failed to start ${command}: ${message}`)
+    closeLog()
+    throw toLaunchError(error, command)
   }
 }
