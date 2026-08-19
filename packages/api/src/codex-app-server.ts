@@ -24,7 +24,13 @@ const THREAD_TIMEOUT_MS = 30_000
  */
 const TURN_ABANDON_MS = 30 * 60_000
 
-/** Names this client in the transcript's `originator`, so runs are attributable. */
+/**
+ * Names this client in the transcript's `originator`, which is the field that
+ * actually identifies the tool. The sibling `source` field is not ours to pick —
+ * it labels the transport, and Codex calls every app-server client `vscode` for
+ * historical reasons (the VS Code extension was the first one). Codex Desktop
+ * and the official iOS client carry the same `vscode` value.
+ */
 const CLIENT_NAME = 'browsey'
 
 type JsonRpcMessage = {
@@ -173,6 +179,9 @@ export async function startCodexThread({
       cwd,
       sandbox: 'danger-full-access',
       approvalPolicy: 'never',
+      // These are person-initiated threads, not subagent spawns — same value the
+      // Desktop and iOS clients record for a thread someone started by hand.
+      threadSource: 'user',
       ...(model ? { model } : {}),
     },
   })

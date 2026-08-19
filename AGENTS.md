@@ -194,6 +194,14 @@ Browsey spawns a detached process and responds immediately; results are picked u
     resumed thread still carries one `session_meta`). So Codex threads are created over the
     **app-server protocol** (`codex-app-server.ts`), which records `source: vscode` and
     `originator: browsey` from our `clientInfo`, and they show up in both Codex clients.
+  - **`source` is not ours to pick and `vscode` there does not mean VS Code.** It labels the
+    transport; Codex has called every app-server client `vscode` since the VS Code extension
+    was the first one. On this machine ten different tools carry it, including Codex Desktop
+    itself and the official iOS client — only `originator: codex_vscode` is the actual
+    extension. It is unaffected by `clientInfo.name`, `serviceName` and `sessionStartSource`
+    (all measured). The field that identifies us is `originator`, and it says `browsey`.
+    `threadSource: 'user'` is set too, matching what the real clients record for a thread a
+    person started, rather than leaving it empty like a subagent spawn.
   - **The turn must be seen through to a clean shutdown.** Killing the app server early
     truncates the thread — it keeps the user's message and drops the answer — and never
     closing it leaks one process per launch. The run therefore ends on `turn/completed` by
