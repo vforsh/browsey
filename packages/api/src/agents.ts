@@ -33,6 +33,17 @@ const SPAWN_GRACE_MS = 200
 /** Bytes of the run log read back to explain a fast failure. */
 const LOG_TAIL_BYTES = 2_000
 
+/**
+ * `codex exec` has no `--session-id`, so the only way to hand back an id the
+ * user can resume with is to read the one it prints on startup. Without this a
+ * Codex thread is unreachable in practice: it is not listed in Codex Desktop,
+ * not in the iOS app, and the `codex resume` picker hides non-interactive
+ * sessions unless `--include-non-interactive` is passed.
+ */
+const CODEX_SESSION_ID_TIMEOUT_MS = 4_000
+const CODEX_SESSION_ID_POLL_MS = 150
+const CODEX_SESSION_ID_RE = /^session id:\s*([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\s*$/m
+
 /** Extra PATH entries — the launchd-managed instance inherits a bare PATH. */
 const EXTRA_PATH_ENTRIES = ['/opt/homebrew/bin', join(homedir(), '.local/bin')]
 
@@ -422,7 +433,22 @@ function readFailureReason(logPath: string): string | null {
   }
 }
 
+async function readCodexSessionId(logPath: string): Promise<string | undefined> {
+  const deadline = Date.now() + CODEX_SESSION_ID_TIMEOUT_MS
+  for (;;) {
+    try {
+      const match = CODEX_SESSION_ID_RE.exec(readFileSync(logPath, 'utf-8'))
+      if (match?.[1]) return match[1]
+    } catch {
+      // The log may not exist yet; keep waiting until the deadline.
+    }
+    if (Date.now() >= deadline) return undefined
+    await new Promise((resolve) => setTimeout(resolve, CODEX_SESSION_ID_POLL_MS))
+  }
+}
+
 export type SpawnedThread = {
+  /** Claude: the minted `--resume` id. Codex: the id it printed on startup. */
   sessionId?: string
 }
 
@@ -495,7 +521,12 @@ export async function spawnAgentThread({
     })
 
     child.unref()
-    return sessionId ? { sessionId } : {}
+    if (sessionId) return { sessionId }
+
+    // Codex prints its id a beat after start; the child is already detached, so
+    // this only delays the reply, never the run.
+    const codexSessionId = await readCodexSessionId(logPath)
+    return codexSessionId ? { sessionId: codexSessionId } : {}
   } catch (error) {
     if (error instanceof AgentLaunchError) throw error
     const message = error instanceof Error ? error.message : String(error)

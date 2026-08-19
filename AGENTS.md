@@ -207,6 +207,14 @@ Browsey spawns a detached process and responds immediately; results are picked u
     0.148.0, so on the installed version the app-server transport always writes `legacy`.
     The 0.146.0 binary is gone (cask upgrade), and the daemon's control socket does not
     answer a plain `initialize`, so there is no version-matched client to reach it with.
+  - **Where an exec thread actually is.** It is listed in *none* of the three places:
+    not Codex Desktop, not the Codex iOS app, and not the default `codex resume` picker —
+    that picker hides non-interactive sessions unless `--include-non-interactive` is
+    passed. It is fully resumable by id though, with history intact (verified:
+    `codex exec resume <id> "..."` recalled its own earlier answer). Because `codex exec`
+    has no `--session-id`, the launch reads the id it prints on startup out of the run log
+    and returns it as `sessionId`, so callers do not have to dig through
+    `~/.codex/sessions`. Do not claim these threads are discoverable without the flag.
   - **Cheap re-test after a Codex upgrade** — if this combination starts working, switching
     back is a small change. Run, with no turn so it costs nothing, and look at the result:
     ```bash

@@ -144,6 +144,10 @@ It is fire-and-forget: Browsey spawns a detached process and answers immediately
 live in the CLIs' own session stores — pick them up later on the Mac with
 `claude --resume <session-id>` or `codex resume`.
 
+Codex threads are launched non-interactively, so they do not show up in Codex Desktop, the
+Codex iOS app, or the plain `codex resume` picker. Resume them by the `sessionId` the launch
+returns, or list them with `codex resume --all --include-non-interactive`.
+
 Agent endpoints are **enabled by default** and always require a bearer token.
 
 ```bash
