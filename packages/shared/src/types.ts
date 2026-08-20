@@ -312,8 +312,9 @@ export type AgentFailure = {
 
 /**
  * `prompt` composes a one-shot thread from a prompt and its file context.
- * `session` opens a live session in a directory and hands it over — there is
- * nothing to compose, so clients must not ask for a prompt.
+ * `session` opens a live session in a directory and hands it over. Both take a
+ * prompt and compose it the same way; the difference is that a session is also
+ * happy without one, and then opens idle waiting to be talked to.
  */
 export type AgentLaunchMode = 'prompt' | 'session'
 
@@ -371,7 +372,7 @@ export type AgentLaunchTarget = {
 
 export type AgentLaunchRequest = {
   agent: AgentId
-  /** Required for `prompt` agents, ignored by `session` ones. */
+  /** Required for `prompt` agents, optional for `session` ones. */
   prompt?: string
   /**
    * One of the ids `/api/agents` offered. Omitting it falls back on the CLI's

@@ -131,8 +131,9 @@ const AGENT_DEFINITIONS: Record<AgentId, AgentDefinition> = {
     binEnvVar: 'BROWSEY_CLAUDE_BIN',
     knownBinPaths: [join(homedir(), '.local/bin/claude')],
     command: 'claude',
-    // Claude opens a live Remote Control session rather than composing a thread:
-    // the phone app's Code section lists live sessions and nothing else.
+    // Claude gets a live Remote Control session rather than a one-shot run: the
+    // phone app's Code section lists live sessions and nothing else. A prompt is
+    // still honoured — it just arrives as the session's first turn.
     launchMode: 'session',
     listSessions: listClaudeSessions,
     // Claude Code tags each session with the surface it came from, and the
@@ -428,6 +429,12 @@ function relativeToCwd(cwd: string, targetAbs: string): string {
   return relativePath === '' ? '.' : relativePath.split(sep).join('/')
 }
 
+/**
+ * Empty in, empty out: context without instructions is not worth sending. Only
+ * `session` agents can get here blank, and there it is the whole point — the
+ * session opens idle in the right directory and the user types the first
+ * message themselves.
+ */
 export function buildThreadPrompt({
   kind,
   prompt,
@@ -441,6 +448,8 @@ export function buildThreadPrompt({
   targetAbs: string
   selection?: string
 }): string {
+  if (prompt.trim().length === 0) return ''
+
   const relativePath = relativeToCwd(cwd, targetAbs)
 
   if (kind === 'selection') {
@@ -474,17 +483,15 @@ export function validateLaunchRequest(body: unknown): ValidatedLaunchRequest {
     throw new AgentLaunchError(400, 'Unknown agent')
   }
 
-  // A `session` agent opens an empty session and hands it over, so a prompt is
-  // not merely optional — there is nowhere to put one.
-  const wantsPrompt = AGENT_DEFINITIONS[agent].launchMode === 'prompt'
+  // A `prompt` agent has nothing to run without one. A `session` agent starts
+  // on it when given one and opens idle when not, so blank stays legal there.
+  const requiresPrompt = AGENT_DEFINITIONS[agent].launchMode === 'prompt'
   const rawPrompt = typeof prompt === 'string' ? prompt : ''
-  if (wantsPrompt) {
-    if (rawPrompt.trim().length === 0) {
-      throw new AgentLaunchError(400, 'prompt is required')
-    }
-    if (rawPrompt.length > MAX_PROMPT_LENGTH) {
-      throw new AgentLaunchError(400, `prompt exceeds ${MAX_PROMPT_LENGTH} characters`)
-    }
+  if (requiresPrompt && rawPrompt.trim().length === 0) {
+    throw new AgentLaunchError(400, 'prompt is required')
+  }
+  if (rawPrompt.length > MAX_PROMPT_LENGTH) {
+    throw new AgentLaunchError(400, `prompt exceeds ${MAX_PROMPT_LENGTH} characters`)
   }
 
   const resolvedModel = model ?? ''
@@ -538,7 +545,7 @@ export function validateLaunchRequest(body: unknown): ValidatedLaunchRequest {
 
   return {
     agent,
-    prompt: wantsPrompt ? rawPrompt.trim() : '',
+    prompt: rawPrompt.trim(),
     model: resolvedModel,
     effort: resolvedEffort,
     target: { kind, path, ...(kind === 'selection' ? { selection } : {}) },
@@ -679,10 +686,19 @@ export async function spawnAgentThread({
       return { sessionId: threadId }
     }
 
-    // No exit is watched: the session is meant to sit idle until somebody talks
-    // to it, so an exit code says nothing about its health. A session that never
-    // registers throws instead, and that surfaces at the launch call.
-    const { session } = await startClaudeSession({ binary, cwd, model, effort, logFd, env })
+    // No exit is watched: the session outlives the launch either way — idle
+    // waiting to be talked to, or working on the prompt — so an exit code says
+    // nothing about its health. A session that never registers throws instead,
+    // and that surfaces at the launch call.
+    const { session } = await startClaudeSession({
+      binary,
+      cwd,
+      prompt: finalPrompt,
+      model,
+      effort,
+      logFd,
+      env,
+    })
     closeLog()
     return { sessionId: session.sessionId, url: session.url ?? undefined }
   } catch (error) {

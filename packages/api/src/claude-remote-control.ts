@@ -206,6 +206,7 @@ export type StartedClaudeSession = {
 export async function startClaudeSession({
   binary,
   cwd,
+  prompt,
   model,
   effort,
   logFd,
@@ -213,6 +214,12 @@ export async function startClaudeSession({
 }: {
   binary: string
   cwd: string
+  /**
+   * Claude's positional prompt: the session starts working on it the moment it
+   * registers. Empty string opens the session idle instead, which is what a
+   * launch with no instructions asks for.
+   */
+  prompt: string
   model: string
   /** Empty string omits the flag, leaving the level to Claude's own config. */
   effort: string
@@ -236,6 +243,9 @@ export async function startClaudeSession({
     'bypassPermissions',
     ...(model ? ['--model', model] : []),
     ...(effort ? ['--effort', effort] : []),
+    // Last, so it lands on the positional `prompt` argument rather than being
+    // swallowed by `--remote-control`, whose own name argument is optional.
+    ...(prompt ? [prompt] : []),
   ]
 
   const child = spawn(argv[0]!, argv.slice(1), {

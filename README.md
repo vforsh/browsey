@@ -146,10 +146,12 @@ behave differently, because the apps you pick the work up in do.
   folder, file or excerpt you launched from, runs it, and is forgotten. Browsey answers as
   soon as the thread exists; the result is waiting for you in the Codex app, or under
   `codex resume`.
-- **[Claude Code](https://docs.claude.com/en/docs/claude-code)** takes no prompt at all. It
-  opens a live Remote Control session in a directory and answers with a link that opens
-  *that* session in the Claude phone app, which is where the conversation then happens. The
-  session stays up until you stop it, and survives a browsey restart.
+- **[Claude Code](https://docs.claude.com/en/docs/claude-code)** opens a live Remote Control
+  session in a directory and answers with a link that opens *that* session in the Claude
+  phone app, which is where the conversation then happens. The prompt is optional: given
+  one, the session starts on it immediately; left blank, it opens idle and waits for you to
+  say something. Either way the session stays up until you stop it, and survives a browsey
+  restart.
 
 Agent endpoints are **enabled by default** and always require a bearer token.
 

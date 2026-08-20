@@ -131,7 +131,7 @@ browsey pair [target]                 # --url <url>, --name <name>
 | `POST /api/git/revert` | Discard changes for one git file |
 | `GET /api/reload` | SSE live reload (watch mode) |
 | `GET /api/agents?path=/` | Agent capabilities (installed CLIs, curated model lists with the reasoning levels each model accepts, live sessions; `path` adds the cwd a launch would resolve to) — **bearer token required** |
-| `POST /api/agents/launch` | Launch a Codex thread or open a Claude session, optionally at a given `model` and `effort` — **bearer token required** |
+| `POST /api/agents/launch` | Launch a Codex thread or open a Claude session, optionally at a given `model` and `effort`; `prompt` is required for Codex and optional for Claude — **bearer token required** |
 | `POST /api/agents/stop` | End a live Claude session by `sessionId` — **bearer token required** |
 
 ## Key Patterns
@@ -144,6 +144,7 @@ browsey pair [target]                 # --url <url>, --name <name>
 - **Build process**: Frontend bundled as IIFE, inlined into server as constants via `define`
 
 ### Agent Threads
+- **A Claude prompt is the session's positional argument**: `claude --remote-control … "<prompt>"` starts the session on it, so a `session` agent composes the same file/excerpt context a `prompt` agent does. It must be argv's last element — `--remote-control`'s own name argument is optional and would otherwise swallow it. Blank prompt means no argument at all, and the session opens idle
 - **Reasoning levels are per model, not per agent**: Codex models advertise different sets (`ultra` exists on sol/terra but not luna), so `AgentModelOption.efforts` hangs off each model and `/api/agents/launch` validates `effort` against the chosen model
 - **The Codex catalogue is never awaited**: `codex-model-catalogue.ts` refreshes from `model/list` in the background and serves a fallback list until it lands — a cold app-server takes tens of seconds and no request may wait on it
 - **Codex effort rides on `turn/start`**: `thread/start` has no such parameter, and the turn's value is documented as applying to subsequent turns too, so a thread picked up later in Desktop or on the phone stays at the chosen level
