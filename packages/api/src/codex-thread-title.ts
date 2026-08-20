@@ -3,6 +3,13 @@ import {
   openAppServer,
   type CodexAppServer,
 } from './codex-app-server.js'
+import {
+  MAX_TITLE_CHARS,
+  PROMPT_SLICE_CHARS,
+  collapseWhitespace,
+  promptTitle,
+  truncateTitle,
+} from './thread-title.js'
 
 /**
  * Codex itself never titles a thread. `Thread.name` stays null unless a client
@@ -25,10 +32,6 @@ import {
 /** Small, fast, and cheap. Independent of the model the thread itself runs. */
 const TITLE_MODEL = 'gpt-5.6-luna'
 const TITLE_EFFORT = 'high'
-
-const MAX_TITLE_CHARS = 60
-/** Titles come from the opening of the prompt; the rest cannot change them. */
-const PROMPT_SLICE_CHARS = 4_000
 
 const REQUEST_TIMEOUT_MS = 30_000
 const GENERATION_TIMEOUT_MS = 60_000
@@ -71,25 +74,6 @@ function generationPrompt(promptSlice: string): string {
     promptSlice,
     '>>>',
   ].join('\n')
-}
-
-const collapseWhitespace = (text: string) => text.replace(/\s+/g, ' ').trim()
-
-/**
- * Cuts on a word boundary when there is a reasonable one, so the instant title
- * does not end mid-identifier.
- */
-function truncateTitle(text: string): string {
-  if (text.length <= MAX_TITLE_CHARS) return text
-  const cut = text.slice(0, MAX_TITLE_CHARS - 1)
-  const lastSpace = cut.lastIndexOf(' ')
-  return `${(lastSpace > MAX_TITLE_CHARS / 2 ? cut.slice(0, lastSpace) : cut).trimEnd()}…`
-}
-
-/** Phase-one title: the prompt itself, flattened to one line. */
-export function fallbackThreadTitle(prompt: string): string | null {
-  const flattened = collapseWhitespace(prompt.slice(0, PROMPT_SLICE_CHARS))
-  return flattened.length === 0 ? null : truncateTitle(flattened)
 }
 
 /** Guards against a model that ignores the length rule or answers with quotes. */
@@ -205,7 +189,7 @@ export async function nameCodexThread({
   prompt: string
   env: NodeJS.ProcessEnv
 }): Promise<void> {
-  const fallback = fallbackThreadTitle(prompt)
+  const fallback = promptTitle(prompt)
   if (!fallback) return
 
   // No log fd: the run log's tail is read back as the reason a launch failed, and
