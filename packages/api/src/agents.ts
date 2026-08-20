@@ -140,10 +140,18 @@ const AGENT_DEFINITIONS: Record<AgentId, AgentDefinition> = {
     // the value depending on whatever env browsey happened to be started with —
     // a shell running inside Claude Code exports it, a launchd job does not.
     env: { CLAUDE_CODE_ENTRYPOINT: 'claude-desktop' },
+    // Labels carry the version each id resolves to today, because "Opus" next
+    // to "Opus 5" says nothing about which is which. That makes them a
+    // maintenance cost: `--model` documents the bare words as aliases for "the
+    // latest model", so every label but `claude-opus-5`'s is a snapshot and
+    // goes wrong the day an alias moves. Verify with
+    // `claude -p x --model <id> --output-format json` and read `modelUsage`.
     models: [
-      { id: 'fable', label: 'Fable' },
-      { id: 'opus', label: 'Opus' },
-      { id: 'sonnet', label: 'Sonnet' },
+      { id: 'claude-opus-5', label: 'Opus 5' },
+      { id: 'opus[1m]', label: 'Opus 4.8 1M' },
+      { id: 'opus', label: 'Opus 4.8' },
+      { id: 'fable', label: 'Fable 5' },
+      { id: 'sonnet', label: 'Sonnet 4.6' },
     ],
     // Claude advertises nothing per model; `--effort` documents the whole set.
     resolveEfforts: () => CLAUDE_EFFORT_IDS.map((id) => effortOption(id)),
@@ -265,8 +273,9 @@ function describeModels(
 
   // The list is curated, but whatever the CLI is configured to use always
   // belongs on it: that is what a launch used to get by sending no model at
-  // all, and it can be something the curated list does not name — `opus[1m]`
-  // is not `opus`. Leaving it off would quietly take a working choice away.
+  // all, and a config can name something the list does not — a pinned full
+  // model name, or a context variant. Leaving it off would quietly swap the
+  // user's own default for the nearest chip that happens to look like it.
   const curated = definition.models
   const models =
     defaultModel && !curated.some((model) => model.id === defaultModel)
