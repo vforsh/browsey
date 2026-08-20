@@ -5,10 +5,9 @@ import {
 } from './codex-app-server.js'
 import {
   MAX_TITLE_CHARS,
-  PROMPT_SLICE_CHARS,
-  collapseWhitespace,
+  generationPrompt,
   promptTitle,
-  truncateTitle,
+  sanitizeGeneratedTitle,
 } from './thread-title.js'
 
 /**
@@ -57,32 +56,6 @@ const TITLE_SCHEMA = {
   additionalProperties: false,
 }
 
-function generationPrompt(promptSlice: string): string {
-  return [
-    'Write a short title for a coding assistant thread that opens with the message below.',
-    '',
-    'Rules:',
-    '- 3 to 8 words, at most 60 characters.',
-    '- Title Case. No quotes, no trailing punctuation, no file extensions.',
-    '- Name the task, not the message: "Fix Tab Bar Overlap", not "Request About A File".',
-    '- If the message defers the real instructions to a later one, title it from whatever',
-    '  file, directory or excerpt it does carry.',
-    '- Answer in English even when the message is in another language.',
-    '',
-    'Message:',
-    '<<<',
-    promptSlice,
-    '>>>',
-  ].join('\n')
-}
-
-/** Guards against a model that ignores the length rule or answers with quotes. */
-function sanitizeGeneratedTitle(raw: unknown): string | null {
-  if (typeof raw !== 'string') return null
-  const cleaned = collapseWhitespace(raw).replace(/^["'`]+|["'`.]+$/g, '')
-  return cleaned.length === 0 ? null : truncateTitle(cleaned)
-}
-
 async function setName(server: CodexAppServer, threadId: string, name: string): Promise<void> {
   await server.request('thread/name/set', { threadId, name }, REQUEST_TIMEOUT_MS)
 }
@@ -122,7 +95,7 @@ async function setNameOnceWritable(
  * Runs the naming turn on a throwaway thread. Ephemeral keeps it off disk and
  * out of every thread list, and read-only means a title can never cost a write.
  */
-async function generateTitle(server: CodexAppServer, promptSlice: string): Promise<string | null> {
+async function generateTitle(server: CodexAppServer, prompt: string): Promise<string | null> {
   const started = await server.request(
     'thread/start',
     { ephemeral: true, sandbox: 'read-only', approvalPolicy: 'never' },
@@ -148,7 +121,7 @@ async function generateTitle(server: CodexAppServer, promptSlice: string): Promi
     'turn/start',
     {
       threadId: thread.id,
-      input: [{ type: 'text', text: generationPrompt(promptSlice) }],
+      input: [{ type: 'text', text: generationPrompt(prompt) }],
       model: TITLE_MODEL,
       effort: TITLE_EFFORT,
       sandboxPolicy: { type: 'readOnly' },
@@ -207,7 +180,7 @@ export async function nameCodexThread({
   try {
     await setNameOnceWritable(server, threadId, fallback)
 
-    const generated = await generateTitle(server, prompt.slice(0, PROMPT_SLICE_CHARS))
+    const generated = await generateTitle(server, prompt)
     if (!generated || generated === fallback) return
 
     // A rename by hand between the two phases wins: it is a deliberate choice and

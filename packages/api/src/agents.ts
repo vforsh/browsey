@@ -13,6 +13,7 @@ import { homedir } from 'os'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'path'
 import { findGitRoot } from './git.js'
 import { CodexAppServerError, startCodexThread } from './codex-app-server.js'
+import { claudeThreadTitle } from './claude-thread-title.js'
 import { nameCodexThread } from './codex-thread-title.js'
 import {
   FALLBACK_EFFORT_IDS,
@@ -607,20 +608,21 @@ export type SpawnedThread = {
 export async function spawnAgentThread({
   agent,
   cwd,
+  prompt,
   finalPrompt,
-  title,
   model,
   effort,
 }: {
   agent: AgentId
   cwd: string
-  finalPrompt: string
   /**
-   * What to call the thread, and Claude's only chance at a title: its session
-   * name is fixed at spawn. Codex ignores it and names itself over the protocol
-   * once the thread exists. Empty string falls back to the directory name.
+   * What the user typed, used only to title the thread — `finalPrompt` is what
+   * the agent actually runs. Titling from the raw text is deliberate: the file
+   * and directory context prepended to `finalPrompt` would name every thread
+   * after a path.
    */
-  title: string
+  prompt: string
+  finalPrompt: string
   model: string
   /** Empty string leaves the level to the CLI's own configuration. */
   effort: string
@@ -685,7 +687,7 @@ export async function spawnAgentThread({
       // Not awaited: titling takes seconds and the phone is waiting on this
       // response. It also must not be able to fail the launch — the thread is
       // already running by now, with or without a name.
-      void nameCodexThread({ binary, cwd, threadId, prompt: finalPrompt, env }).catch((error) => {
+      void nameCodexThread({ binary, cwd, threadId, prompt, env }).catch((error) => {
         const message = error instanceof Error ? error.message : String(error)
         console.warn(`Warning: could not name codex thread ${threadId}: ${message}`)
       })
@@ -697,10 +699,14 @@ export async function spawnAgentThread({
     // waiting to be talked to, or working on the prompt — so an exit code says
     // nothing about its health. A session that never registers throws instead,
     // and that surfaces at the launch call.
+    // Awaited, and the only part of a launch that is: a Remote Control session's
+    // name cannot be changed once it has one, so the title has to be ready before
+    // the session is. Worth a few seconds; the alternative is a permanent name
+    // nobody chose.
     const { session } = await startClaudeSession({
       binary,
       cwd,
-      name: title,
+      name: await claudeThreadTitle({ binary, prompt, env }),
       prompt: finalPrompt,
       model,
       effort,

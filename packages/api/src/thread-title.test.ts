@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { MAX_TITLE_CHARS, promptTitle } from './thread-title.js'
+import { MAX_TITLE_CHARS, promptTitle, sanitizeGeneratedTitle } from './thread-title.js'
 
 describe('promptTitle', () => {
   test('uses the prompt as written when it already fits', () => {
@@ -40,5 +40,30 @@ describe('promptTitle', () => {
     expect(promptTitle('')).toBeNull()
     expect(promptTitle('   \n\t ')).toBeNull()
     expect(promptTitle('---')).toBeNull()
+  })
+})
+
+describe('sanitizeGeneratedTitle', () => {
+  // Claude answers on stdout, so the raw value arrives with a trailing newline.
+  test('trims what a CLI adds around the answer', () => {
+    expect(sanitizeGeneratedTitle('Fix Tab Bar Overlap\n')).toBe('Fix Tab Bar Overlap')
+  })
+
+  test('drops quoting and trailing punctuation the rules told it not to add', () => {
+    expect(sanitizeGeneratedTitle('"Fix Tab Bar Overlap."')).toBe('Fix Tab Bar Overlap')
+    expect(sanitizeGeneratedTitle('`Rename Session Titles`')).toBe('Rename Session Titles')
+  })
+
+  test('enforces the length rule the model was asked to follow', () => {
+    const title = sanitizeGeneratedTitle('Investigate '.repeat(12))
+    expect(title!.length).toBeLessThanOrEqual(MAX_TITLE_CHARS)
+    expect(title!.endsWith('…')).toBe(true)
+  })
+
+  test('rejects an answer that is not usable text', () => {
+    expect(sanitizeGeneratedTitle('')).toBeNull()
+    expect(sanitizeGeneratedTitle('  \n ')).toBeNull()
+    expect(sanitizeGeneratedTitle(undefined)).toBeNull()
+    expect(sanitizeGeneratedTitle(42)).toBeNull()
   })
 })
