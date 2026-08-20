@@ -45,7 +45,9 @@ browsey/
     │       ├── routes.ts     # API route handlers
     │       ├── git.ts        # Git operations
     │       ├── agents.ts      # Agent thread launch (capabilities, cwd resolution, spawn)
+    │       ├── claude-remote-control.ts # Claude Remote Control session spawn/list/stop
     │       ├── codex-app-server.ts   # Codex app-server JSON-RPC client + thread start
+    │       ├── thread-title.ts       # Prompt → thread title, shared by both agents
     │       ├── codex-thread-title.ts # Two-phase Codex thread titling (slice, then generated)
     │       ├── codex-model-catalogue.ts # Cached `model/list` read for per-model reasoning levels
     │       └── live-reload.ts # SSE live reload
@@ -145,6 +147,8 @@ browsey pair [target]                 # --url <url>, --name <name>
 
 ### Agent Threads
 - **A Claude prompt is the session's positional argument**: `claude --remote-control … "<prompt>"` starts the session on it, so a `session` agent composes the same file/excerpt context a `prompt` agent does. It must be argv's last element — `--remote-control`'s own name argument is optional and would otherwise swallow it. Blank prompt means no argument at all, and the session opens idle
+- **A Claude session's name is its only title**: the name passed to `--remote-control` is what the phone lists, permanently. Claude does generate a title from the first message, but it stays on the Mac (`aiTitle` in the transcript) — the code that would push it to the session record the phone reads bails whenever a name was given, so omitting the name buys `<hostname>-<adjective>-<noun>`, not the generated title. Verified empirically against that record; there is no rename we can reach after spawn. Hence the name is `promptTitle(prompt)`, falling back to the directory only when there is no prompt to title from
+- **Titles come from the prompt the user typed**: not from `finalPrompt`, whose prepended `File:` / `Work within the subdirectory:` context would title every thread after a path. `thread-title.ts` also strips leading dashes, without which a prompt like `-v is broken` becomes an unknown flag on Claude's argv
 - **Reasoning levels are per model, not per agent**: Codex models advertise different sets (`ultra` exists on sol/terra but not luna), so `AgentModelOption.efforts` hangs off each model and `/api/agents/launch` validates `effort` against the chosen model
 - **The Codex catalogue is never awaited**: `codex-model-catalogue.ts` refreshes from `model/list` in the background and serves a fallback list until it lands — a cold app-server takes tens of seconds and no request may wait on it
 - **Codex effort rides on `turn/start`**: `thread/start` has no such parameter, and the turn's value is documented as applying to subsequent turns too, so a thread picked up later in Desktop or on the phone stays at the chosen level

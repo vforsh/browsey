@@ -24,6 +24,7 @@ import {
 } from './agents.js'
 import type { CapabilitiesTarget } from './agents.js'
 import { stopClaudeSession } from './claude-remote-control.js'
+import { promptTitle } from './thread-title.js'
 import type { ApiRoutesOptions, FileItem, ListResponse, SyncManifestDirectory, SyncManifestResponse, SearchResult, SearchResponse, GitStatusResponse, GitLogResponse, GitCommitResponse, GitCommitFile, GitChangesResponse, GitRevertResponse, HealthResponse, ViewResponse, SaveTextResponse, AgentLaunchResponse, AgentStopRequest, AgentStopResponse } from '@vforsh/browsey-shared'
 
 const JSON_HEADERS = {
@@ -389,6 +390,9 @@ async function handleAgentLaunch(req: Request, options: ApiRoutesOptions): Promi
       agent,
       cwd,
       finalPrompt,
+      // From what the user typed, not from `finalPrompt`: the target context
+      // prepended to that would title every thread after a file path.
+      title: promptTitle(prompt) ?? '',
       model,
       effort,
     })

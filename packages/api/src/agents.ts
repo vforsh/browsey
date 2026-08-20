@@ -608,12 +608,19 @@ export async function spawnAgentThread({
   agent,
   cwd,
   finalPrompt,
+  title,
   model,
   effort,
 }: {
   agent: AgentId
   cwd: string
   finalPrompt: string
+  /**
+   * What to call the thread, and Claude's only chance at a title: its session
+   * name is fixed at spawn. Codex ignores it and names itself over the protocol
+   * once the thread exists. Empty string falls back to the directory name.
+   */
+  title: string
   model: string
   /** Empty string leaves the level to the CLI's own configuration. */
   effort: string
@@ -693,6 +700,7 @@ export async function spawnAgentThread({
     const { session } = await startClaudeSession({
       binary,
       cwd,
+      name: title,
       prompt: finalPrompt,
       model,
       effort,

@@ -171,6 +171,10 @@ browsey start --no-agents # or turn the endpoints off entirely
   the machine — treat it like an SSH key.
 - **cwd**: resolved to the nearest agent project already known to the CLI, else the git
   root, else the target folder — so threads land in real projects and reuse their history.
+- **Titles**: a thread is named after the prompt you sent it, so the list in either app
+  reads like a list of tasks rather than one repeated folder name. Codex replaces that with
+  a generated title moments later; a Claude session keeps it, because a Remote Control
+  session's name is fixed when it starts. Launch with no prompt and the name is the folder.
 - **Live sessions**: `GET /api/agents` lists the Claude ones, read from Claude's own state
   directory and filtered by whether the process is still alive — so a session started before
   the last browsey restart is still listed and still stoppable. `POST /api/agents/stop` ends

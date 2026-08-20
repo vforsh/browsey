@@ -206,6 +206,7 @@ export type StartedClaudeSession = {
 export async function startClaudeSession({
   binary,
   cwd,
+  name,
   prompt,
   model,
   effort,
@@ -214,6 +215,17 @@ export async function startClaudeSession({
 }: {
   binary: string
   cwd: string
+  /**
+   * What the phone lists this session as, permanently.
+   *
+   * Claude generates its own title from the first message, but that title never
+   * leaves the Mac once a name is passed here: the name is what the session
+   * registers with, and the code that would replace it with the generated one
+   * bails whenever a name was given. Verified against the session record the
+   * phone actually reads — so this argument is the only title there will be, and
+   * an empty string is worse than a boring one.
+   */
+  name: string
   /**
    * Claude's positional prompt: the session starts working on it the moment it
    * registers. Empty string opens the session idle instead, which is what a
@@ -238,7 +250,7 @@ export async function startClaudeSession({
     '/dev/null',
     binary,
     '--remote-control',
-    basename(cwd) || 'browsey',
+    name || basename(cwd) || 'browsey',
     '--permission-mode',
     'bypassPermissions',
     ...(model ? ['--model', model] : []),
