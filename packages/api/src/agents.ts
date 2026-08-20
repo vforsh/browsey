@@ -147,6 +147,7 @@ const AGENT_DEFINITIONS: Record<AgentId, AgentDefinition> = {
     // goes wrong the day an alias moves. Verify with
     // `claude -p x --model <id> --output-format json` and read `modelUsage`.
     models: [
+      { id: 'claude-opus-5[1m]', label: 'Opus 5 1M' },
       { id: 'claude-opus-5', label: 'Opus 5' },
       { id: 'opus[1m]', label: 'Opus 4.8 1M' },
       { id: 'opus', label: 'Opus 4.8' },
