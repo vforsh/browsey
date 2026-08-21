@@ -99,6 +99,12 @@ export async function startApiServer(
   const localUrl = getLocalUrl(listenHost, options.port, options.https)
   const networkUrl = getNetworkUrl(listenHost, options.port, options.https)
   let stopBonjour: (() => void) | null = null
+  /**
+   * What the banner reports, decided where the outcome is actually known. The
+   * flag only says the advertisement was asked for; printing "enabled" after it
+   * threw sends people hunting for a network fault that isn't there.
+   */
+  let bonjourStatus = 'disabled'
 
   if (options.bonjour) {
     try {
@@ -109,10 +115,13 @@ export async function startApiServer(
         version: options.version,
         https: options.https,
         readonly: options.readonly,
+        interfaceAddress: getLanAddress(),
       })
+      bonjourStatus = `enabled (_${getBrowseyServiceType()}._tcp)`
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       console.warn(`Warning: Bonjour advertisement failed: ${message}`)
+      bonjourStatus = 'failed — see the warning above'
     }
   }
 
@@ -127,7 +136,7 @@ export async function startApiServer(
     console.log()
     console.log(`  \x1b[2mServing:\x1b[0m ${rootPath}`)
     console.log(`  \x1b[2mMode:\x1b[0m    ${options.readonly ? 'read-only' : 'read-write'}`)
-    console.log(`  \x1b[2mBonjour:\x1b[0m ${options.bonjour ? `enabled (_${getBrowseyServiceType()}._tcp)` : 'disabled'}`)
+    console.log(`  \x1b[2mBonjour:\x1b[0m ${bonjourStatus}`)
     console.log(`  \x1b[2mCORS:\x1b[0m    ${corsOrigin}`)
     console.log(
       `  \x1b[2mAgents:\x1b[0m  ${
@@ -203,19 +212,27 @@ function getLocalUrl(host: string, port: number, https: boolean): string {
   return `${protocol}://${host}:${port}`
 }
 
+/**
+ * The address this machine is reachable at from the network. Also the interface
+ * the Bonjour responder advertises from, so what is announced and what is
+ * printed can never disagree.
+ */
+function getLanAddress(): string | null {
+  for (const iface of Object.values(networkInterfaces())) {
+    for (const config of iface ?? []) {
+      if (config.family === 'IPv4' && !config.internal) {
+        return config.address
+      }
+    }
+  }
+  return null
+}
+
 function getNetworkUrl(host: string, port: number, https: boolean): string | null {
   if (host !== '0.0.0.0' && host !== '::') {
     return null
   }
 
-  const protocol = https ? 'https' : 'http'
-  const interfaces = networkInterfaces()
-  for (const iface of Object.values(interfaces)) {
-    for (const config of iface ?? []) {
-      if (config.family === 'IPv4' && !config.internal) {
-        return `${protocol}://${config.address}:${port}`
-      }
-    }
-  }
-  return null
+  const address = getLanAddress()
+  return address ? `${https ? 'https' : 'http'}://${address}:${port}` : null
 }
