@@ -26,6 +26,7 @@ import {
   listClaudeSessions,
   startClaudeSession,
 } from './claude-remote-control.js'
+import type { PhaseReporter } from './claude-remote-control.js'
 import type {
   AgentDescriptor,
   AgentEffortOption,
@@ -612,6 +613,7 @@ export async function spawnAgentThread({
   finalPrompt,
   model,
   effort,
+  onPhase,
 }: {
   agent: AgentId
   cwd: string
@@ -626,6 +628,12 @@ export async function spawnAgentThread({
   model: string
   /** Empty string leaves the level to the CLI's own configuration. */
   effort: string
+  /**
+   * Notified as the launch moves between phases, for a caller that is streaming
+   * progress. Never called for a phase the chosen agent does not have, so the
+   * narration stays true per agent rather than being a fixed sequence.
+   */
+  onPhase?: PhaseReporter
 }): Promise<SpawnedThread> {
   const binary = resolveAgentBinary(agent)
   if (!binary) {
@@ -672,6 +680,9 @@ export async function spawnAgentThread({
 
   try {
     if (agent === 'codex') {
+      // The only phase a Codex launch has: its thread is named afterwards, by
+      // the un-awaited call below, so there is nothing to report before this.
+      onPhase?.('starting')
       const { threadId, child } = await startCodexThread({
         binary,
         cwd,
@@ -703,15 +714,23 @@ export async function spawnAgentThread({
     // name cannot be changed once it has one, so the title has to be ready before
     // the session is. Worth a few seconds; the alternative is a permanent name
     // nobody chose.
+    //
+    // Reported only when there is a prompt to title. Without one the call returns
+    // an empty string immediately and the name falls back to the directory, so
+    // announcing a naming phase would be announcing a wait that never happens.
+    if (prompt.trim()) onPhase?.('naming')
+    const name = await claudeThreadTitle({ binary, prompt, env })
+
     const { session } = await startClaudeSession({
       binary,
       cwd,
-      name: await claudeThreadTitle({ binary, prompt, env }),
+      name,
       prompt: finalPrompt,
       model,
       effort,
       logFd,
       env,
+      onPhase,
     })
     closeLog()
     return { sessionId: session.sessionId, url: session.url ?? undefined }

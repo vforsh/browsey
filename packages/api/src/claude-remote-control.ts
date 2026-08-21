@@ -2,6 +2,7 @@ import { spawn } from 'child_process'
 import { accessSync, constants, readFileSync, readdirSync } from 'fs'
 import { homedir } from 'os'
 import { basename, join } from 'path'
+import type { AgentLaunchPhase } from '@vforsh/browsey-shared'
 
 /**
  * Claude threads are opened as live Remote Control sessions instead of headless
@@ -164,7 +165,11 @@ function delay(ms: number): Promise<void> {
  * The spawned child is `script`, whose pid is not the session's — so the new
  * session is identified by cwd plus not having existed a moment ago.
  */
-async function awaitRegistration(cwd: string, known: Set<string>): Promise<ClaudeSession> {
+async function awaitRegistration(
+  cwd: string,
+  known: Set<string>,
+  onPhase?: PhaseReporter
+): Promise<ClaudeSession> {
   const deadline = Date.now() + REGISTER_TIMEOUT_MS
   let session: ClaudeSession | null = null
 
@@ -183,6 +188,10 @@ async function awaitRegistration(cwd: string, known: Set<string>): Promise<Claud
   // A session that never grew a link is still handed back: everything except
   // the phone button works, and failing the launch over it would be worse.
   const { sessionId } = session
+  // Reported only once the session exists, so the phase means what it says: the
+  // session is up and this is the wait for its link. Skipped entirely when the
+  // link was already there, which is why this sits after the first read.
+  if (!session.url) onPhase?.('linking')
   const linkDeadline = Date.now() + BRIDGE_TIMEOUT_MS
   while (!session.url && Date.now() < linkDeadline) {
     await delay(POLL_INTERVAL_MS)
@@ -195,6 +204,13 @@ async function awaitRegistration(cwd: string, known: Set<string>): Promise<Claud
 export type StartedClaudeSession = {
   session: ClaudeSession
 }
+
+/**
+ * Called as the launch crosses from one phase into the next. Every phase this
+ * module reports is one it is itself waiting on, so a caller can narrate the
+ * wait without knowing how a Remote Control session comes up.
+ */
+export type PhaseReporter = (phase: AgentLaunchPhase) => void
 
 /**
  * Output goes to the run log rather than a pipe, and the child is detached, so
@@ -212,6 +228,7 @@ export async function startClaudeSession({
   effort,
   logFd,
   env,
+  onPhase,
 }: {
   binary: string
   cwd: string
@@ -237,11 +254,13 @@ export async function startClaudeSession({
   effort: string
   logFd: number
   env: NodeJS.ProcessEnv
+  onPhase?: PhaseReporter
 }): Promise<StartedClaudeSession> {
   if (!isExecutable(SCRIPT_BIN)) {
     throw new ClaudeRemoteControlError(`${SCRIPT_BIN} not found; Remote Control needs a pty`)
   }
 
+  onPhase?.('starting')
   const known = new Set(listClaudeSessions().map((session) => session.sessionId))
 
   const argv = [
@@ -268,7 +287,7 @@ export async function startClaudeSession({
   })
 
   try {
-    const session = await awaitRegistration(cwd, known)
+    const session = await awaitRegistration(cwd, known, onPhase)
     child.unref()
     return { session }
   } catch (error) {

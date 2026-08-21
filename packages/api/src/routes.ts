@@ -24,7 +24,7 @@ import {
 } from './agents.js'
 import type { CapabilitiesTarget } from './agents.js'
 import { stopClaudeSession } from './claude-remote-control.js'
-import type { ApiRoutesOptions, FileItem, ListResponse, SyncManifestDirectory, SyncManifestResponse, SearchResult, SearchResponse, GitStatusResponse, GitLogResponse, GitCommitResponse, GitCommitFile, GitChangesResponse, GitRevertResponse, HealthResponse, ViewResponse, SaveTextResponse, AgentLaunchResponse, AgentStopRequest, AgentStopResponse } from '@vforsh/browsey-shared'
+import type { ApiRoutesOptions, FileItem, ListResponse, SyncManifestDirectory, SyncManifestResponse, SearchResult, SearchResponse, GitStatusResponse, GitLogResponse, GitCommitResponse, GitCommitFile, GitChangesResponse, GitRevertResponse, HealthResponse, ViewResponse, SaveTextResponse, AgentLaunchEvent, AgentLaunchResponse, AgentStopRequest, AgentStopResponse } from '@vforsh/browsey-shared'
 
 const JSON_HEADERS = {
   'Content-Type': 'application/json',
@@ -345,12 +345,38 @@ async function handleAgentStop(req: Request): Promise<Response> {
   return jsonResponse(response)
 }
 
-async function handleAgentLaunch(req: Request, options: ApiRoutesOptions): Promise<Response> {
+/** Everything a launch needs, once the request has been found sound. */
+type LaunchPlan = Parameters<typeof spawnAgentThread>[0] & { reused: boolean }
+
+/**
+ * Media type that turns a launch from one JSON object into a stream of them.
+ * Negotiated rather than given its own route: the work and the result are
+ * identical either way, only the delivery differs, and a second route would be a
+ * second copy of the validation below.
+ */
+const LAUNCH_STREAM_MIME = 'application/x-ndjson'
+
+/**
+ * Validates a launch and resolves where it would land, without starting it.
+ *
+ * Split out because it is the half that can still fail properly: everything here
+ * answers with a real status code, whereas anything that goes wrong after the
+ * agent is spawning has to be reported inside an already-200 stream.
+ */
+async function planLaunch(
+  req: Request,
+  options: ApiRoutesOptions
+): Promise<{ plan: LaunchPlan } | { error: Response }> {
+  /** A launch that never started, so it can still be refused with a status. */
+  const reject = (message: string, status: number) => ({
+    error: jsonResponse({ error: message }, { status }),
+  })
+
   let body: unknown
   try {
     body = await req.json()
   } catch {
-    return jsonResponse({ error: 'Invalid JSON body' }, { status: 400 })
+    return reject('Invalid JSON body', 400)
   }
 
   try {
@@ -360,20 +386,20 @@ async function handleAgentLaunch(req: Request, options: ApiRoutesOptions): Promi
     // resolved cwd may legitimately land above it.
     const safePath = resolveSafePath(options.root, target.path)
     if (!safePath) {
-      return jsonResponse({ error: 'Access denied: Invalid path' }, { status: 403 })
+      return reject('Access denied: Invalid path', 403)
     }
 
     let stat: Awaited<ReturnType<typeof fs.stat>>
     try {
       stat = await fs.stat(safePath.fullPath)
     } catch {
-      return jsonResponse({ error: 'Target path not found' }, { status: 404 })
+      return reject('Target path not found', 404)
     }
     if (target.kind === 'directory' && !stat.isDirectory()) {
-      return jsonResponse({ error: 'Target path is not a directory' }, { status: 400 })
+      return reject('Target path is not a directory', 400)
     }
     if (target.kind !== 'directory' && stat.isDirectory()) {
-      return jsonResponse({ error: 'Target path is not a file' }, { status: 400 })
+      return reject('Target path is not a file', 400)
     }
 
     const { cwd, reused } = await resolveThreadCwd(safePath.fullPath, stat.isDirectory(), agent)
@@ -385,29 +411,100 @@ async function handleAgentLaunch(req: Request, options: ApiRoutesOptions): Promi
       selection: target.selection,
     })
 
-    const { sessionId, url } = await spawnAgentThread({
-      agent,
-      cwd,
-      prompt,
-      finalPrompt,
-      model,
-      effort,
-    })
-
-    const response: AgentLaunchResponse = {
-      launched: true,
-      agent,
-      cwd,
-      reusedProject: reused,
-      ...(sessionId ? { sessionId } : {}),
-      ...(url ? { url } : {}),
-    }
-    return jsonResponse(response)
+    return { plan: { agent, cwd, prompt, finalPrompt, model, effort, reused } }
   } catch (error) {
-    if (error instanceof AgentLaunchError) {
-      return jsonResponse({ error: error.message }, { status: error.status })
-    }
-    return jsonResponse({ error: 'Internal server error' }, { status: 500 })
+    return { error: launchErrorResponse(error) }
+  }
+}
+
+/**
+ * How a launch failure reads, before it is decided whether that goes in the
+ * status line or in the stream. Only `AgentLaunchError` is trusted to describe
+ * itself; anything else is a bug and says nothing.
+ */
+function launchFailure(error: unknown): { error: string; status: number } {
+  if (error instanceof AgentLaunchError) {
+    return { error: error.message, status: error.status }
+  }
+  return { error: 'Internal server error', status: 500 }
+}
+
+function launchErrorResponse(error: unknown): Response {
+  const { error: message, status } = launchFailure(error)
+  return jsonResponse({ error: message }, { status })
+}
+
+function launchResult(plan: LaunchPlan, sessionId?: string, url?: string): AgentLaunchResponse {
+  return {
+    launched: true,
+    agent: plan.agent,
+    cwd: plan.cwd,
+    reusedProject: plan.reused,
+    ...(sessionId ? { sessionId } : {}),
+    ...(url ? { url } : {}),
+  }
+}
+
+/**
+ * Runs the launch, reporting each phase as its own NDJSON line so a client can
+ * narrate a wait that is mostly one slow step. Exactly one terminal event is
+ * written, and the response is committed to 200 the moment the first line goes
+ * out — which is why a failure is an event here rather than a status.
+ */
+function streamLaunch(plan: LaunchPlan): Response {
+  const encoder = new TextEncoder()
+
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      // A client that navigated away mid-launch leaves nothing to write to, and
+      // the launch itself is deliberately allowed to finish regardless — the
+      // session it started is real whether or not anyone heard about it.
+      let open = true
+      const send = (event: AgentLaunchEvent) => {
+        if (!open) return
+        try {
+          controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`))
+        } catch {
+          open = false
+        }
+      }
+
+      try {
+        const { sessionId, url } = await spawnAgentThread({
+          ...plan,
+          onPhase: (phase) => send({ event: 'phase', phase }),
+        })
+        send({ event: 'launched', result: launchResult(plan, sessionId, url) })
+      } catch (error) {
+        send({ event: 'failed', ...launchFailure(error) })
+      } finally {
+        if (open) controller.close()
+      }
+    },
+    cancel() {
+      // Nothing to unwind: the spawn is fire-and-forget by design, and `send`
+      // notices the closed stream on its next write.
+    },
+  })
+
+  return new Response(stream, {
+    headers: { 'Content-Type': LAUNCH_STREAM_MIME, 'Cache-Control': 'no-store' },
+  })
+}
+
+async function handleAgentLaunch(req: Request, options: ApiRoutesOptions): Promise<Response> {
+  const planned = await planLaunch(req, options)
+  if ('error' in planned) return planned.error
+
+  if ((req.headers.get('accept') ?? '').includes(LAUNCH_STREAM_MIME)) {
+    return streamLaunch(planned.plan)
+  }
+
+  try {
+    const { sessionId, url } = await spawnAgentThread(planned.plan)
+    return jsonResponse(launchResult(planned.plan, sessionId, url))
+  } catch (error) {
+    return launchErrorResponse(error)
   }
 }
 

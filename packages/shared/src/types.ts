@@ -397,6 +397,31 @@ export type AgentLaunchResponse = {
   url?: string
 }
 
+/**
+ * What a launch is busy with right now.
+ *
+ * Only ever the phases the chosen agent actually has, never a fixed script:
+ * Claude has to name a session before it can start one, so it reports `naming`
+ * first and that is the bulk of the wait; Codex names its thread afterwards and
+ * never reports `naming` at all. `linking` is the wait for a link the phone can
+ * open, which is also the one phase allowed to time out without failing.
+ */
+export type AgentLaunchPhase = 'naming' | 'starting' | 'linking'
+
+/**
+ * One NDJSON line of a streaming launch, requested with
+ * `Accept: application/x-ndjson`.
+ *
+ * A stream always ends in exactly one terminal event. `failed` carries the
+ * status the plain-JSON route would have answered with, because by the time a
+ * phase has gone out the response is already committed to 200 and the code can
+ * no longer be said in the status line.
+ */
+export type AgentLaunchEvent =
+  | { event: 'phase'; phase: AgentLaunchPhase }
+  | { event: 'launched'; result: AgentLaunchResponse }
+  | { event: 'failed'; error: string; status: number }
+
 export type AgentStopRequest = {
   sessionId: string
 }
