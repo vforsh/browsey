@@ -155,12 +155,13 @@ async function writeTextFileAtomically(filePath: string, content: string, mode: 
   }
 }
 
-function getHealthResponse(readonly: boolean): HealthResponse {
+function getHealthResponse(readonly: boolean, serverId?: string): HealthResponse {
   const runtime = typeof Bun !== 'undefined' ? 'bun' : 'node'
   const runtimeVersion = runtime === 'bun' ? Bun.version : process.version
 
   return {
     ok: true,
+    ...(serverId ? { serverId } : {}),
     readonly,
     host: {
       hostname: os.hostname(),
@@ -213,7 +214,7 @@ export async function handleApiRequest(
   const route = url.pathname.slice('/api'.length)
 
   if (route === '/health') {
-    return jsonResponse(getHealthResponse(options.readonly))
+    return jsonResponse(getHealthResponse(options.readonly, options.serverId))
   }
   if (route === '/list') {
     return handleList(url, options)

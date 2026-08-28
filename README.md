@@ -98,6 +98,7 @@ Browsey exposes a simple REST API:
 
 | Endpoint | Description |
 |----------|-------------|
+| `GET /api/health` | Health, readonly mode, host metadata and persistent `serverId` |
 | `GET /api/list?path=/` | List directory contents |
 | `GET /api/sync/manifest?path=/&revision=<sha256>` | Recursively snapshot a tree for offline sync; matching revisions return `unchanged: true` |
 | `GET /api/file?path=/file.txt` | Download a file |
@@ -110,6 +111,20 @@ Browsey exposes a simple REST API:
 | `GET /api/agents?path=/` | Agent capabilities: installed CLIs, model lists and live sessions; `path` adds the working directory a launch would resolve to (**bearer token required**) |
 | `POST /api/agents/launch` | Start a Codex thread, or open a Claude session (**bearer token required**) |
 | `POST /api/agents/stop` | End a live Claude session (**bearer token required**) |
+
+### Server identity
+
+`/api/health` and Bonjour TXT expose the same public `serverId`. It identifies
+one canonical root-directory/port configuration in this Browsey installation,
+not one IP address or process. Different network interfaces and process restarts
+keep the ID; a different root or port gets another ID. Names are not identifiers.
+
+Immutable identity records live in `~/.browsey/server-identities/`. Keep this
+directory when upgrading; copying it to another computer would also copy those
+identities. Concurrent initial starts publish one record atomically. Corrupt
+records fail explicitly rather than silently replacing IDs. The field is an
+additive API extension and not an authentication credential; agent tokens must
+not be inferred or transferred based on a matching public ID.
 
 ### Response format
 

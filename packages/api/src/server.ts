@@ -5,6 +5,7 @@ import qrcode from 'qrcode-terminal'
 import { handleApiRequest } from './routes.js'
 import { createReloadSSEResponse, startWatcher, stopWatcher } from './live-reload.js'
 import { getBrowseyServiceType, startBonjourAdvertisement } from './bonjour.js'
+import { getServerId } from './server-identity.js'
 import { withCors, corsPreflightResponse } from '@vforsh/browsey-shared'
 import type { ApiServerOptions, InstanceInfo } from '@vforsh/browsey-shared'
 
@@ -51,6 +52,7 @@ export async function startApiServer(
   const corsOrigin = options.corsOrigin
 
   const apiOptions = {
+    serverId: await getServerId(rootPath, options.port),
     root: rootPath,
     readonly: options.readonly,
     showHidden: options.showHidden,
@@ -109,6 +111,7 @@ export async function startApiServer(
   if (options.bonjour) {
     try {
       stopBonjour = startBonjourAdvertisement({
+        serverId: apiOptions.serverId,
         host: options.host,
         port: options.port,
         rootPath,

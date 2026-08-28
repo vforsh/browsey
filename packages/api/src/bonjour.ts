@@ -13,6 +13,7 @@ import { basename } from 'path'
 import { Bonjour } from 'bonjour-service'
 
 type BonjourAdvertiseOptions = {
+  serverId: string
   host: string
   port: number
   rootPath: string
@@ -65,6 +66,7 @@ function serviceName(rootPath: string): string {
 /** What a discovering client reads to tell instances apart before connecting. */
 function serviceTxt(options: BonjourAdvertiseOptions): Record<string, string> {
   return {
+    serverId: options.serverId,
     host: options.host,
     path: options.rootPath,
     protocol: options.https ? 'https' : 'http',

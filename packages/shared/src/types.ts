@@ -122,6 +122,7 @@ export type SaveTextResponse = {
 }
 
 export type ApiRoutesOptions = {
+  serverId?: string
   root: string
   readonly: boolean
   showHidden: boolean
@@ -200,6 +201,7 @@ export type HealthHostInfo = {
 }
 
 export type HealthResponse = {
+  serverId?: string
   ok: boolean
   readonly: boolean
   host: HealthHostInfo
