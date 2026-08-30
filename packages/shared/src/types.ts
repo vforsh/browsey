@@ -223,6 +223,8 @@ export type GitStatusResponse = {
   } | null
   remoteUrl: string | null
   repoRoot: string | null
+  ahead: number | null
+  behind: number | null
 }
 
 export type CommitInfo = {

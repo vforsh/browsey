@@ -19,6 +19,8 @@ export type GitStatus = {
   } | null
   remoteUrl: string | null
   repoRoot: string | null
+  ahead: number | null
+  behind: number | null
 }
 
 type GitCommandResult = {
@@ -358,6 +360,8 @@ export async function getGitStatus(path: string): Promise<GitStatus> {
       lastCommit: null,
       remoteUrl: null,
       repoRoot: null,
+      ahead: null,
+      behind: null,
     }
   }
 
@@ -415,6 +419,25 @@ export async function getGitStatus(path: string): Promise<GitStatus> {
   // Get remote URL
   const remoteUrl = await runGitCommand(path, ['remote', 'get-url', 'origin'])
 
+  // Ahead/behind vs upstream (null when the branch has no upstream)
+  let ahead: number | null = null
+  let behind: number | null = null
+  const aheadBehind = await runGitCommand(path, [
+    'rev-list',
+    '--left-right',
+    '--count',
+    'HEAD...@{upstream}',
+  ])
+  if (aheadBehind) {
+    const [left, right] = aheadBehind.split(/\s+/)
+    const parsedAhead = Number.parseInt(left ?? '', 10)
+    const parsedBehind = Number.parseInt(right ?? '', 10)
+    if (Number.isFinite(parsedAhead) && Number.isFinite(parsedBehind)) {
+      ahead = parsedAhead
+      behind = parsedBehind
+    }
+  }
+
   return {
     isRepo: true,
     branch,
@@ -425,6 +448,8 @@ export async function getGitStatus(path: string): Promise<GitStatus> {
     lastCommit,
     remoteUrl,
     repoRoot,
+    ahead,
+    behind,
   }
 }
 
