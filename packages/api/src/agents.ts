@@ -153,8 +153,8 @@ const AGENT_DEFINITIONS: Record<AgentId, AgentDefinition> = {
       { id: 'claude-opus-5[1m]', label: 'Opus 5 1M' },
       { id: 'claude-opus-5', label: 'Opus 5' },
       { id: 'claude-fable-5-1', label: 'Fable 5.1' },
-      { id: 'fable', label: 'Fable 5' },
-      { id: 'sonnet', label: 'Sonnet 4.6' },
+      { id: 'claude-fable-5', label: 'Fable 5' },
+      { id: 'sonnet', label: 'Sonnet 5' },
     ],
     // Claude advertises nothing per model; `--effort` documents the whole set.
     resolveEfforts: () => CLAUDE_EFFORT_IDS.map((id) => effortOption(id)),
