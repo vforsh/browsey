@@ -15,12 +15,9 @@ import { findGitRoot } from './git.js'
 import { CodexAppServerError, startCodexThread } from './codex-app-server.js'
 import { claudeThreadTitle } from './claude-thread-title.js'
 import { nameCodexThread } from './codex-thread-title.js'
-import {
-  FALLBACK_EFFORT_IDS,
-  cachedEffortCatalogue,
-  effortOption,
-  type EffortCatalogue,
-} from './codex-model-catalogue.js'
+import { FALLBACK_EFFORT_IDS, cachedEffortCatalogue } from './codex-model-catalogue.js'
+import { cachedClaudeCatalogue, refreshClaudeCatalogue } from './claude-model-catalogue.js'
+import { effortOption } from './effort.js'
 import {
   ClaudeRemoteControlError,
   listClaudeSessions,
@@ -66,8 +63,13 @@ export class AgentLaunchError extends Error {
   }
 }
 
-/** Levels `claude --effort` accepts. Flat: the CLI takes the same set always. */
-const CLAUDE_EFFORT_IDS = ['low', 'medium', 'high', 'xhigh', 'max']
+/**
+ * Stand-in levels, used only until the catalogue has been read — the real ones
+ * come per model from `/v1/models`, because they genuinely differ: Sonnet 4.6
+ * has no `xhigh`, and Haiku 4.5 advertises no levels at all. These five are
+ * what `claude --effort` accepts, which is the widest a launch can be asked for.
+ */
+const CLAUDE_FALLBACK_EFFORT_IDS = ['low', 'medium', 'high', 'xhigh', 'max']
 
 /**
  * Claude Code stores no effort anywhere and documents no default, so unlike
@@ -78,12 +80,24 @@ const CLAUDE_DEFAULT_EFFORT = 'medium'
 
 type CuratedModel = { id: string; label: string }
 
-type EffortContext = {
-  /** Null until the CLI's catalogue has been read at least once. */
-  catalogue: EffortCatalogue | null
-  /** Stands in for an omitted model flag, which an older client may still send. */
-  defaultModel: string | null
-}
+/**
+ * Shown only until `/v1/models` has been read: a cold start, a machine with no
+ * credentials, or an outage. Being a snapshot is now this list's only job, so
+ * it holds pinned ids rather than the moving aliases it used to — a label that
+ * is merely old beats one that is confidently wrong about which model it names.
+ */
+const CLAUDE_FALLBACK_MODELS: CuratedModel[] = [
+  { id: 'claude-fable-5-1', label: 'Fable 5.1' },
+  { id: 'claude-opus-5', label: 'Opus 5' },
+  { id: 'claude-sonnet-5', label: 'Sonnet 5' },
+]
+
+/** Codex has no equivalent endpoint, so this list stays hand-picked. */
+const CODEX_MODELS: CuratedModel[] = [
+  { id: 'gpt-5.6-sol', label: 'gpt-5.6-sol' },
+  { id: 'gpt-5.6-terra', label: 'gpt-5.6-terra' },
+  { id: 'gpt-5.6-luna', label: 'gpt-5.6-luna' },
+]
 
 type AgentDefinition = {
   id: AgentId
@@ -93,15 +107,19 @@ type AgentDefinition = {
   /** Stable install locations, checked before falling back to PATH. */
   knownBinPaths: string[]
   command: string
-  /** Curated model list, joined by the CLI's own default when that is not on it. */
-  models: CuratedModel[]
-  /** Levels to offer for one model, from whatever the catalogue could supply. */
-  resolveEfforts: (modelId: string, context: EffortContext) => AgentEffortOption[]
-  /** Reads what the CLI advertises per model. Cached, and never awaited. */
-  loadEffortCatalogue?: (
+  /**
+   * The model rows, each carrying the levels that model itself accepts. Where
+   * the two agents differ is only in who they ask, so each one owns its own
+   * lookup rather than sharing a shape that fits neither.
+   *
+   * Must stay cheap: every catalogue behind this is cached and never awaited, so
+   * a capabilities call costs no more than it did before any of it existed.
+   */
+  describeModels: (
     binary: string | null,
-    env: NodeJS.ProcessEnv
-  ) => EffortCatalogue | null
+    env: NodeJS.ProcessEnv,
+    defaultModel: string | null
+  ) => AgentModelOption[]
   /** Config file read (best effort) to label the default model. */
   defaultModelFile: string
   readDefaultModel: (contents: string) => string | null
@@ -143,21 +161,8 @@ const AGENT_DEFINITIONS: Record<AgentId, AgentDefinition> = {
     // the value depending on whatever env browsey happened to be started with —
     // a shell running inside Claude Code exports it, a launchd job does not.
     env: { CLAUDE_CODE_ENTRYPOINT: 'claude-desktop' },
-    // Labels carry the version each id resolves to today, because "Opus" next
-    // to "Opus 5" says nothing about which is which. That makes them a
-    // maintenance cost: `--model` documents the bare words as aliases for "the
-    // latest model", so every label but the pinned `claude-*` ids' is a
-    // snapshot and goes wrong the day an alias moves. Verify with
-    // `claude -p x --model <id> --output-format json` and read `modelUsage`.
-    models: [
-      { id: 'claude-opus-5[1m]', label: 'Opus 5 1M' },
-      { id: 'claude-opus-5', label: 'Opus 5' },
-      { id: 'claude-fable-5-1', label: 'Fable 5.1' },
-      { id: 'claude-fable-5', label: 'Fable 5' },
-      { id: 'sonnet', label: 'Sonnet 5' },
-    ],
-    // Claude advertises nothing per model; `--effort` documents the whole set.
-    resolveEfforts: () => CLAUDE_EFFORT_IDS.map((id) => effortOption(id)),
+    describeModels: (_binary, env, defaultModel) =>
+      withConfiguredDefault(claudeModels(env), defaultModel, claudeFallbackEfforts),
     defaultModelFile: join(homedir(), '.claude/settings.json'),
     readDefaultModel: (contents) => {
       const parsed = JSON.parse(contents) as { model?: unknown }
@@ -172,20 +177,21 @@ const AGENT_DEFINITIONS: Record<AgentId, AgentDefinition> = {
     knownBinPaths: ['/opt/homebrew/bin/codex'],
     command: 'codex',
     launchMode: 'prompt',
-    models: [
-      { id: 'gpt-5.6-sol', label: 'gpt-5.6-sol' },
-      { id: 'gpt-5.6-terra', label: 'gpt-5.6-terra' },
-      { id: 'gpt-5.6-luna', label: 'gpt-5.6-luna' },
-    ],
-    // Each model advertises its own levels, and they differ — `ultra` is not on
-    // all of them. Before the catalogue has been read, the set every model has
-    // in common stands in, so the row is never empty and never wrong.
-    resolveEfforts: (modelId, { catalogue, defaultModel }) => {
-      const resolved = modelId || defaultModel
-      const advertised = resolved ? catalogue?.get(resolved) : null
-      return advertised ?? FALLBACK_EFFORT_IDS.map((id) => effortOption(id))
+    // Curated: `model/list` is authoritative about levels but lists far more
+    // models than are worth offering, so only the levels are read from it.
+    describeModels: (binary, env, defaultModel) => {
+      const catalogue = cachedEffortCatalogue(binary, env)
+      // Each model advertises its own levels, and they differ — `ultra` is not
+      // on all of them. Before the catalogue has been read, the set every model
+      // has in common stands in, so the row is never empty and never wrong.
+      const efforts = (modelId: string): AgentEffortOption[] => {
+        const resolved = modelId || defaultModel
+        const advertised = resolved ? catalogue?.get(resolved) : null
+        return advertised ?? FALLBACK_EFFORT_IDS.map((id) => effortOption(id))
+      }
+      const models = CODEX_MODELS.map((model) => ({ ...model, efforts: efforts(model.id) }))
+      return withConfiguredDefault(models, defaultModel, efforts)
     },
-    loadEffortCatalogue: cachedEffortCatalogue,
     defaultModelFile: join(homedir(), '.codex/config.toml'),
     readDefaultModel: (contents) => readTopLevelString(contents, 'model'),
     readDefaultEffort: (contents) => readTopLevelString(contents, 'model_reasoning_effort'),
@@ -259,36 +265,43 @@ function readDefaults(definition: AgentDefinition): {
 }
 
 /**
- * Effort lists hang off each model rather than the agent, because that is where
- * they actually differ. Building them is deliberately cheap — the catalogue read
- * behind `loadEffortCatalogue` is cached and never awaited, so a capabilities
- * call stays as fast as it was before any of this existed.
+ * Read from the account's own catalogue once it has been fetched, from the
+ * curated snapshot until then. Effort lists come with it, per model, because
+ * that is where they actually differ.
  */
-function describeModels(
-  definition: AgentDefinition,
-  binary: string | null,
-  defaultModel: string | null
-): AgentModelOption[] {
-  const context: EffortContext = {
-    catalogue: definition.loadEffortCatalogue?.(binary, agentEnv(definition)) ?? null,
-    defaultModel,
-  }
+function claudeModels(env: NodeJS.ProcessEnv): AgentModelOption[] {
+  // Already shaped as a model row, labels and all — nothing to map.
+  const catalogue = cachedClaudeCatalogue(env)
+  if (catalogue && catalogue.length > 0) return catalogue
 
-  // The list is curated, but whatever the CLI is configured to use always
-  // belongs on it: that is what a launch used to get by sending no model at
-  // all, and a config can name something the list does not — a pinned full
-  // model name, or a context variant. Leaving it off would quietly swap the
-  // user's own default for the nearest chip that happens to look like it.
-  const curated = definition.models
-  const models =
-    defaultModel && !curated.some((model) => model.id === defaultModel)
-      ? [{ id: defaultModel, label: defaultModel }, ...curated]
-      : curated
-
-  return models.map((model) => ({
+  return CLAUDE_FALLBACK_MODELS.map((model) => ({
     ...model,
-    efforts: definition.resolveEfforts(model.id, context),
+    efforts: claudeFallbackEfforts(),
   }))
+}
+
+function claudeFallbackEfforts(): AgentEffortOption[] {
+  return CLAUDE_FALLBACK_EFFORT_IDS.map((id) => effortOption(id))
+}
+
+/**
+ * Whatever the CLI is configured to use always belongs on the list: that is what
+ * a launch gets by sending no model at all, and a config can name something the
+ * list does not — an older pinned model, or a context variant like `opus[1m]`.
+ * Leaving it off would quietly swap the user's own default for the nearest chip
+ * that happens to look like it.
+ *
+ * Its levels are resolved the same way every other row's are. An id that is not
+ * on the list is usually one no catalogue knows either — an alias, or a context
+ * variant — so in practice this is what each agent falls back to.
+ */
+function withConfiguredDefault(
+  models: AgentModelOption[],
+  defaultModel: string | null,
+  efforts: (modelId: string) => AgentEffortOption[]
+): AgentModelOption[] {
+  if (!defaultModel || models.some((model) => model.id === defaultModel)) return models
+  return [{ id: defaultModel, label: defaultModel, efforts: efforts(defaultModel) }, ...models]
 }
 
 function describeAgent(definition: AgentDefinition, targetCwd: string | null): AgentDescriptor {
@@ -299,7 +312,7 @@ function describeAgent(definition: AgentDefinition, targetCwd: string | null): A
     id: definition.id,
     name: definition.name,
     installed: binary !== null,
-    models: describeModels(definition, binary, defaults.model),
+    models: definition.describeModels(binary, agentEnv(definition), defaults.model),
     defaultModel: defaults.model,
     defaultEffort: defaults.effort,
     lastFailure: lastFailures.get(definition.id) ?? null,
@@ -307,6 +320,20 @@ function describeAgent(definition: AgentDefinition, targetCwd: string | null): A
     sessions: definition.listSessions?.() ?? [],
     targetCwd,
   }
+}
+
+/**
+ * Re-reads the model lists now rather than whenever the cache next lapses,
+ * which is what the phone's refresh button is for: a model that shipped this
+ * morning should be selectable this morning.
+ *
+ * Only Claude has anything to fetch. Codex's list is curated, so a release
+ * cannot appear on it without an edit here anyway, and forcing its level
+ * catalogue would mean spawning an app server and waiting tens of seconds for
+ * an answer that changes on the same release day the curated list does.
+ */
+export async function refreshAgentModels(): Promise<void> {
+  await refreshClaudeCatalogue(agentEnv(AGENT_DEFINITIONS['claude-code']))
 }
 
 export type CapabilitiesTarget = {

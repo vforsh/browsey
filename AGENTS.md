@@ -51,6 +51,8 @@ browsey/
     │       ├── claude-thread-title.ts # Pre-spawn title generation (a session name cannot change)
     │       ├── codex-thread-title.ts # Two-phase Codex thread titling (slice, then generated)
     │       ├── codex-model-catalogue.ts # Cached `model/list` read for per-model reasoning levels
+    │       ├── claude-model-catalogue.ts # Cached `GET /v1/models` read for Claude's model list + levels
+    │       ├── effort.ts      # Reasoning-level naming, shared by both catalogues
     │       └── live-reload.ts # SSE live reload
     ├── app/                  # @vforsh/browsey-app
     │   ├── package.json
@@ -133,7 +135,8 @@ browsey pair [target]                 # --url <url>, --name <name>
 | `GET /api/git/commit?path=/&hash=<sha>` | Git commit details, stats, navigation, and changed files (`includeAdjacent=0` skips navigation lookup) |
 | `POST /api/git/revert` | Discard changes for one git file |
 | `GET /api/reload` | SSE live reload (watch mode) |
-| `GET /api/agents?path=/` | Agent capabilities (installed CLIs, curated model lists with the reasoning levels each model accepts, live sessions; `path` adds the cwd a launch would resolve to) — **bearer token required** |
+| `GET /api/agents?path=/` | Agent capabilities (installed CLIs, model lists with the reasoning levels each model accepts, live sessions; `path` adds the cwd a launch would resolve to) — **bearer token required** |
+| `POST /api/agents/models/refresh` | Force a re-read of the model lists and answer with the resulting capabilities; optional `path` in the body behaves as it does on the GET. `502` when the catalogue could not be fetched, leaving the current lists in place — **bearer token required** |
 | `POST /api/agents/launch` | Launch a Codex thread or open a Claude session, optionally at a given `model` and `effort`; `prompt` is required for Codex and optional for Claude — **bearer token required** |
 | `POST /api/agents/stop` | End a live Claude session by `sessionId` — **bearer token required** |
 
@@ -152,8 +155,11 @@ browsey pair [target]                 # --url <url>, --name <name>
 - **Titling a Claude session blocks the launch, by necessity**: because of the above, `claude-thread-title.ts` has to generate the title *before* the spawn — roughly 6s of `claude -p --model haiku` the user waits through. The flags there are load-bearing, not tidiness: `--system-prompt` replaces Claude Code's own (worth ~3s), `--strict-mcp-config` skips every MCP server, `--no-session-persistence` keeps the turn out of the session list the phone reads, and `--bare` must never be used because it skips the keychain and the run fails with "Not logged in". It runs in an empty `mktemp` directory so project hooks/settings/CLAUDE.md cannot slow it, sway it, or execute on a launch nobody asked that of. Any failure or a 15s timeout falls back to the prompt slice, silently
 - **Titles come from the prompt the user typed**: `spawnAgentThread` takes `prompt` and `finalPrompt` separately for this reason — titling from the latter, with its prepended `File:` / `Work within the subdirectory:` context, would name every thread after a path. `thread-title.ts` also strips leading dashes, without which a prompt like `-v is broken` becomes an unknown flag on Claude's argv
 - **Both agents share the generation rules**: `generationPrompt` and `sanitizeGeneratedTitle` live in `thread-title.ts` so a thread reads the same in the Codex app as in Claude's, despite two different models writing it. Codex asks for a JSON schema over the app-server protocol; Claude reads plain stdout — same rules, same sanitiser
-- **Reasoning levels are per model, not per agent**: Codex models advertise different sets (`ultra` exists on sol/terra but not luna), so `AgentModelOption.efforts` hangs off each model and `/api/agents/launch` validates `effort` against the chosen model
-- **The Codex catalogue is never awaited**: `codex-model-catalogue.ts` refreshes from `model/list` in the background and serves a fallback list until it lands — a cold app-server takes tens of seconds and no request may wait on it
+- **Reasoning levels are per model, not per agent**: both agents' models advertise different sets — `ultra` is on Codex's sol/terra but not luna; Sonnet 4.6 has no `xhigh` and Haiku 4.5 accepts no level at all — so `AgentModelOption.efforts` hangs off each model and `/api/agents/launch` validates `effort` against the chosen model. An empty list is legal end to end: validation skips a blank effort and the CLI is spawned without `--effort`
+- **Neither catalogue is ever awaited**: `codex-model-catalogue.ts` and `claude-model-catalogue.ts` both refresh in the background and serve a curated fallback until the read lands, so no request waits on one. `POST /api/agents/models/refresh` is the only awaited path, because a person is watching it
+- **Claude's model list is read, not curated**: Claude Code cannot be asked what models it accepts — no subcommand, no on-disk catalogue, no equivalent of Codex's `model/list`, and its `/model` picker is fed by a private endpoint. So `claude-model-catalogue.ts` reads the account's own `GET /v1/models`, which is not token-billed, and takes `display_name` as the label and `created_at` as the order. This is why **bare aliases (`opus`, `fable`, `sonnet`) must never be added to a model list**: they are the only ids whose meaning moves, and a hand-written label beside one goes wrong the day it moves — which it did, twice, before this existed
+- **The catalogue credential is a cascade, and the last step is undocumented**: `ANTHROPIC_API_KEY` first, since it is the documented way into `/v1/models`; failing that, the OAuth token Claude Code writes to the login keychain (`security find-generic-password -s "Claude Code-credentials"`), which is what a subscription machine actually has. That pairing is not documented and may stop working, so it is the fallback and never the path — and every caller still has `CLAUDE_FALLBACK_MODELS` behind it. An expired token is treated as no token, since a 401 is indistinguishable here from an outage
+- **Codex's list stays hand-picked**: `model/list` is authoritative about levels but advertises far more models than are worth offering, so only the levels are read from it
 - **Codex effort rides on `turn/start`**: `thread/start` has no such parameter, and the turn's value is documented as applying to subsequent turns too, so a thread picked up later in Desktop or on the phone stays at the chosen level
 
 ### Security

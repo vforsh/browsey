@@ -1,4 +1,5 @@
 import { openAppServer } from './codex-app-server.js'
+import { effortOption } from './effort.js'
 import type { AgentEffortOption } from '@vforsh/browsey-shared'
 
 /**
@@ -25,15 +26,6 @@ const MAX_PAGES = 5
 /** Levels every model in the catalogue has advertised, used until it is read. */
 export const FALLBACK_EFFORT_IDS = ['low', 'medium', 'high', 'xhigh']
 
-const LABELS: Record<string, string> = {
-  low: 'Low',
-  medium: 'Medium',
-  high: 'High',
-  xhigh: 'XHigh',
-  max: 'Max',
-  ultra: 'Ultra',
-}
-
 /** Model id to the levels it advertises, in the catalogue's own order. */
 export type EffortCatalogue = Map<string, AgentEffortOption[]>
 
@@ -45,14 +37,6 @@ type CatalogueModel = {
 let cached: { at: number; catalogue: EffortCatalogue } | null = null
 let lastFailureAt = 0
 let inFlight: Promise<void> | null = null
-
-export function effortLabel(id: string): string {
-  return LABELS[id] ?? `${id.charAt(0).toUpperCase()}${id.slice(1)}`
-}
-
-export function effortOption(id: string, description?: string): AgentEffortOption {
-  return { id, label: effortLabel(id), ...(description ? { description } : {}) }
-}
 
 function readEfforts(raw: unknown): AgentEffortOption[] {
   if (!Array.isArray(raw)) return []

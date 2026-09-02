@@ -18,6 +18,7 @@ import {
   AgentLaunchError,
   buildThreadPrompt,
   getAgentCapabilities,
+  refreshAgentModels,
   resolveThreadCwd,
   spawnAgentThread,
   validateLaunchRequest,
@@ -291,6 +292,9 @@ async function handleAgentRoute(
   if (route === '/agents' && req.method === 'GET') {
     return handleAgentCapabilities(req, options)
   }
+  if (route === '/agents/models/refresh' && req.method === 'POST') {
+    return handleAgentModelRefresh(req, options)
+  }
   if (route === '/agents/launch' && req.method === 'POST') {
     return handleAgentLaunch(req, options)
   }
@@ -312,20 +316,60 @@ async function handleAgentCapabilities(
   options: ApiRoutesOptions
 ): Promise<Response> {
   const requestPath = new URL(req.url).searchParams.get('path')
-  let target: CapabilitiesTarget | undefined
+  return jsonResponse(await getAgentCapabilities(await readCapabilitiesTarget(requestPath, options)))
+}
 
-  if (requestPath) {
-    const safePath = resolveSafePath(options.root, requestPath)
-    if (safePath) {
-      try {
-        const stat = await fs.stat(safePath.fullPath)
-        target = { absPath: safePath.fullPath, isDirectory: stat.isDirectory() }
-      } catch {
-        // Path vanished between listing and asking; answer without it.
-      }
-    }
+/** Shared by the capabilities read and the refresh that answers with one. */
+async function readCapabilitiesTarget(
+  requestPath: string | null | undefined,
+  options: ApiRoutesOptions
+): Promise<CapabilitiesTarget | undefined> {
+  if (!requestPath) return undefined
+
+  const safePath = resolveSafePath(options.root, requestPath)
+  if (!safePath) return undefined
+
+  try {
+    const stat = await fs.stat(safePath.fullPath)
+    return { absPath: safePath.fullPath, isDirectory: stat.isDirectory() }
+  } catch {
+    // Path vanished between listing and asking; answer without it.
+    return undefined
+  }
+}
+
+/**
+ * Re-reads the model lists and answers with the capabilities that result, so a
+ * client updates from one round trip instead of having to sequence a refresh
+ * against a fetch.
+ *
+ * A failure is reported rather than swallowed, because the caller is a person
+ * who pressed a button and "nothing new" has to be distinguishable from "could
+ * not look". The lists stay usable either way: a failed refresh leaves the last
+ * good answer in place, or the curated one.
+ */
+async function handleAgentModelRefresh(
+  req: Request,
+  options: ApiRoutesOptions
+): Promise<Response> {
+  // `path` plays the same part it does on the GET, and is just as optional — a
+  // body-less refresh is a valid request for "the list, wherever I am".
+  let body: unknown
+  try {
+    body = await req.json()
+  } catch {
+    body = {}
+  }
+  const { path } = (body ?? {}) as { path?: unknown }
+
+  try {
+    await refreshAgentModels()
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    return jsonResponse({ error: `Could not refresh the model list: ${message}` }, { status: 502 })
   }
 
+  const target = await readCapabilitiesTarget(typeof path === 'string' ? path : null, options)
   return jsonResponse(await getAgentCapabilities(target))
 }
 
