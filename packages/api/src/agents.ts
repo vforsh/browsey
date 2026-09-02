@@ -146,14 +146,13 @@ const AGENT_DEFINITIONS: Record<AgentId, AgentDefinition> = {
     // Labels carry the version each id resolves to today, because "Opus" next
     // to "Opus 5" says nothing about which is which. That makes them a
     // maintenance cost: `--model` documents the bare words as aliases for "the
-    // latest model", so every label but `claude-opus-5`'s is a snapshot and
-    // goes wrong the day an alias moves. Verify with
+    // latest model", so every label but the pinned `claude-*` ids' is a
+    // snapshot and goes wrong the day an alias moves. Verify with
     // `claude -p x --model <id> --output-format json` and read `modelUsage`.
     models: [
       { id: 'claude-opus-5[1m]', label: 'Opus 5 1M' },
       { id: 'claude-opus-5', label: 'Opus 5' },
-      { id: 'opus[1m]', label: 'Opus 4.8 1M' },
-      { id: 'opus', label: 'Opus 4.8' },
+      { id: 'claude-fable-5-1', label: 'Fable 5.1' },
       { id: 'fable', label: 'Fable 5' },
       { id: 'sonnet', label: 'Sonnet 4.6' },
     ],
