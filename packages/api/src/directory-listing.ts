@@ -1,4 +1,4 @@
-import { promises as fs } from 'fs'
+import { promises as fs, type Dirent } from 'fs'
 import { dirname, join, relative, resolve } from 'path'
 import { getFileExtension } from '@vforsh/browsey-shared'
 import type { FileItem, IgnoreMatcher } from '@vforsh/browsey-shared'
@@ -62,6 +62,77 @@ function sortFileItems(items: FileItem[]): void {
   })
 }
 
+/**
+ * Stats are independent, so they run concurrently instead of one round trip
+ * to the thread pool per entry — the difference between a snappy and a sluggish
+ * `node_modules`. The cap keeps a huge directory from exhausting descriptors.
+ */
+const STAT_CONCURRENCY = 32
+
+async function mapConcurrently<T, R>(
+  values: T[],
+  limit: number,
+  work: (value: T) => Promise<R>
+): Promise<R[]> {
+  const results = new Array<R>(values.length)
+  let next = 0
+  const workers = Array.from({ length: Math.min(limit, values.length) }, async () => {
+    while (next < values.length) {
+      const index = next++
+      results[index] = await work(values[index]!)
+    }
+  })
+  await Promise.all(workers)
+  return results
+}
+
+async function readEntryItem(
+  root: string,
+  directoryPath: string,
+  entry: Dirent,
+  strict: boolean
+): Promise<FileItem | null> {
+  const entryPath = join(directoryPath, entry.name)
+  try {
+    const entryStat = entry.isSymbolicLink() ? await fs.lstat(entryPath) : await fs.stat(entryPath)
+
+    if (entry.isSymbolicLink()) {
+      const target = await readSymlinkTarget(root, entryPath)
+      return {
+        name: entry.name,
+        type: 'symlink',
+        size: target.linkBroken ? entryStat.size : target.targetSize,
+        modified: entryStat.mtime.toISOString(),
+        extension: entryExtension(entry.name, target.targetType, false),
+        absolutePath: entryPath,
+        ...target,
+      }
+    }
+    if (entry.isDirectory()) {
+      return {
+        name: entry.name,
+        type: 'directory',
+        size: entryStat.size,
+        modified: entryStat.mtime.toISOString(),
+        extension: null,
+        absolutePath: entryPath,
+      }
+    }
+    return {
+      name: entry.name,
+      type: 'file',
+      size: entryStat.size,
+      modified: entryStat.mtime.toISOString(),
+      extension: getFileExtension(entry.name),
+      absolutePath: entryPath,
+    }
+  } catch (error) {
+    if (strict) throw error
+    // A disappearing or unreadable child should not hide the rest of a listing.
+    return null
+  }
+}
+
 /** Reads one directory using the same item contract as `/api/list`. */
 export async function readDirectoryItems(
   root: string,
@@ -70,54 +141,14 @@ export async function readDirectoryItems(
   ignore: IgnoreMatcher,
   strict = false
 ): Promise<FileItem[]> {
-  const entries = await fs.readdir(directoryPath, { withFileTypes: true })
-  const items: FileItem[] = []
-
-  for (const entry of entries) {
-    if (!showHidden && entry.name.startsWith('.')) continue
-    if (ignore(entry.name)) continue
-
-    const entryPath = join(directoryPath, entry.name)
-    try {
-      const entryStat = entry.isSymbolicLink()
-        ? await fs.lstat(entryPath)
-        : await fs.stat(entryPath)
-
-      if (entry.isSymbolicLink()) {
-        const target = await readSymlinkTarget(root, entryPath)
-        items.push({
-          name: entry.name,
-          type: 'symlink',
-          size: target.linkBroken ? entryStat.size : target.targetSize,
-          modified: entryStat.mtime.toISOString(),
-          extension: entryExtension(entry.name, target.targetType, false),
-          absolutePath: entryPath,
-          ...target,
-        })
-      } else if (entry.isDirectory()) {
-        items.push({
-          name: entry.name,
-          type: 'directory',
-          size: entryStat.size,
-          modified: entryStat.mtime.toISOString(),
-          extension: null,
-          absolutePath: entryPath,
-        })
-      } else {
-        items.push({
-          name: entry.name,
-          type: 'file',
-          size: entryStat.size,
-          modified: entryStat.mtime.toISOString(),
-          extension: getFileExtension(entry.name),
-          absolutePath: entryPath,
-        })
-      }
-    } catch (error) {
-      if (strict) throw error
-      // A disappearing or unreadable child should not hide the rest of a listing.
-    }
-  }
+  const entries = (await fs.readdir(directoryPath, { withFileTypes: true })).filter((entry) => {
+    if (!showHidden && entry.name.startsWith('.')) return false
+    return !ignore(entry.name)
+  })
+  const read = await mapConcurrently(entries, STAT_CONCURRENCY, (entry) =>
+    readEntryItem(root, directoryPath, entry, strict)
+  )
+  const items = read.filter((item): item is FileItem => item !== null)
 
   sortFileItems(items)
   return items
