@@ -18,6 +18,7 @@ import {
   AgentLaunchError,
   buildThreadPrompt,
   getAgentCapabilities,
+  isAgentId,
   refreshAgentModels,
   resolveThreadCwd,
   spawnAgentThread,
@@ -25,6 +26,7 @@ import {
   validateLaunchRequest,
 } from './agents.js'
 import type { CapabilitiesTarget } from './agents.js'
+import { listAgentSkills, skillLookupDir } from './agent-skills.js'
 import { stopClaudeSession } from './claude-remote-control.js'
 import type { ApiRoutesOptions, FileItem, ListResponse, SyncManifestDirectory, SyncManifestResponse, SearchResult, SearchResponse, GitStatusResponse, GitLogResponse, GitCommitResponse, GitCommitFile, GitChangesResponse, GitRevertResponse, HealthResponse, ViewResponse, SaveTextResponse, AgentLaunchEvent, AgentLaunchFailureReason, AgentLaunchResponse, AgentStopRequest, AgentStopResponse, AgentTrustRequest, AgentTrustResponse } from '@vforsh/browsey-shared'
 
@@ -296,6 +298,9 @@ async function handleAgentRoute(
   if (route === '/agents/models/refresh' && req.method === 'POST') {
     return handleAgentModelRefresh(req, options)
   }
+  if (route === '/agents/skills' && req.method === 'GET') {
+    return handleAgentSkills(req, options)
+  }
   if (route === '/agents/launch' && req.method === 'POST') {
     return handleAgentLaunch(req, options)
   }
@@ -321,6 +326,23 @@ async function handleAgentCapabilities(
 ): Promise<Response> {
   const requestPath = new URL(req.url).searchParams.get('path')
   return jsonResponse(await getAgentCapabilities(await readCapabilitiesTarget(requestPath, options)))
+}
+
+/**
+ * The skills a prompt for `path` may name. `agent` is required because the two
+ * CLIs read different folders; `path` is optional and, as on the capabilities
+ * read, an unusable one is ignored rather than rejected — the global skills are
+ * still worth listing.
+ */
+async function handleAgentSkills(req: Request, options: ApiRoutesOptions): Promise<Response> {
+  const url = new URL(req.url)
+  const agent = url.searchParams.get('agent')
+  if (!isAgentId(agent)) {
+    return jsonResponse({ error: 'agent must be claude-code or codex' }, { status: 400 })
+  }
+  const target = await readCapabilitiesTarget(url.searchParams.get('path'), options)
+  const lookupDir = target ? skillLookupDir(target.absPath, target.isDirectory) : null
+  return jsonResponse(await listAgentSkills(agent, lookupDir))
 }
 
 /** Shared by the capabilities read and the refresh that answers with one. */

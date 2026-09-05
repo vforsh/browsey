@@ -449,6 +449,32 @@ export type AgentTrustResponse = {
   changed: boolean
 }
 
+/** Where a skill was found: the agent's home config or the target project. */
+export type AgentSkillSource = 'global' | 'project'
+
+/**
+ * One installed skill, as its `SKILL.md` frontmatter describes it. `name` is
+ * what a prompt refers to it by, so it is what the client inserts and matches.
+ */
+export type AgentSkill = {
+  name: string
+  description: string
+  source: AgentSkillSource
+  /** Absolute path of the skill directory on the server, for display only. */
+  path: string
+}
+
+export type AgentSkillsResponse = {
+  agent: AgentId
+  /**
+   * The directory whose project skills were included, walked up to the git
+   * root. Null when no `path` was asked about and only global skills are listed.
+   */
+  cwd: string | null
+  /** Sorted by name; a project skill shadows a global one of the same name. */
+  skills: AgentSkill[]
+}
+
 export type AgentStopRequest = {
   sessionId: string
 }

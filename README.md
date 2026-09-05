@@ -109,6 +109,7 @@ Browsey exposes a simple REST API:
 | `GET /api/git/commit?path=/&hash=<sha>` | Git commit details, stats, navigation, and changed files (`includeAdjacent=0` skips navigation lookup) |
 | `POST /api/git/revert` | Discard changes for one git file |
 | `GET /api/agents?path=/` | Agent capabilities: installed CLIs, model lists and live sessions; `path` adds the working directory a launch would resolve to (**bearer token required**) |
+| `GET /api/agents/skills?agent=claude-code&path=/` | Skills the agent would see for a launch at `path`: its global ones plus the project's, from the folder up to the git root (**bearer token required**) |
 | `POST /api/agents/launch` | Start a Codex thread, or open a Claude session (**bearer token required**) |
 | `POST /api/agents/trust` | Trust the resolved launch folder for agents that require it (**bearer token required**) |
 | `POST /api/agents/stop` | End a live Claude session (**bearer token required**) |

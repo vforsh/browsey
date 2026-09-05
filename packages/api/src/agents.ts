@@ -367,7 +367,7 @@ export async function getAgentCapabilities(
   return { enabled: true, agents }
 }
 
-function normalizeDir(path: string): string {
+export function normalizeDir(path: string): string {
   const resolved = resolve(path)
   return resolved.length > 1 && resolved.endsWith(sep) ? resolved.slice(0, -1) : resolved
 }
@@ -404,7 +404,7 @@ function knownProjectDirs(agent: AgentId): Set<string> {
 }
 
 /** Ancestors of `dir` from `dir` up to and including `gitRoot`, nearest first. */
-function ancestorsUpTo(dir: string, gitRoot: string): string[] {
+export function ancestorsUpTo(dir: string, gitRoot: string): string[] {
   const relativePath = relative(gitRoot, dir)
   if (relativePath.startsWith('..') || isAbsolute(relativePath)) {
     return [dir]
