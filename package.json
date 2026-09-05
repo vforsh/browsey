@@ -23,7 +23,8 @@
     "prepublishOnly": "bun run build",
     "dev:api": "bun --watch packages/cli/src/bin.ts api",
     "dev:app": "bun --watch packages/cli/src/bin.ts app --api http://localhost:4200",
-    "typecheck": "tsc --build"
+    "typecheck": "tsc --build",
+    "test": "bun test packages"
   },
   "devDependencies": {
     "@types/qrcode-terminal": "^0.12.2",

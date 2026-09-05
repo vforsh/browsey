@@ -81,7 +81,8 @@ browsey/
 bun install          # Install workspace dependencies
 bun run dev:api      # Dev mode API server (port 4200)
 bun run dev:app      # Dev mode UI server (port 4201, connects to API)
-bun run typecheck    # Type checking (all packages)
+bun run typecheck    # Type checking (all packages); test files are excluded from the build so they never land in dist
+bun run test         # bun:test suites under packages/*/src
 bun run build        # Build distribution executable
 ```
 

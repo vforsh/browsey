@@ -24,5 +24,7 @@
     { "path": "packages/cli" }
   ],
   "include": [],
-  "exclude": ["node_modules", "dist"]
+  // Tests run from src with bun; emitting them into dist made bun test pick up
+  // stale compiled copies alongside the sources.
+  "exclude": ["node_modules", "dist", "**/*.test.ts"]
 }
