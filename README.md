@@ -110,6 +110,7 @@ Browsey exposes a simple REST API:
 | `POST /api/git/revert` | Discard changes for one git file |
 | `GET /api/agents?path=/` | Agent capabilities: installed CLIs, model lists and live sessions; `path` adds the working directory a launch would resolve to (**bearer token required**) |
 | `POST /api/agents/launch` | Start a Codex thread, or open a Claude session (**bearer token required**) |
+| `POST /api/agents/trust` | Trust the resolved launch folder for agents that require it (**bearer token required**) |
 | `POST /api/agents/stop` | End a live Claude session (**bearer token required**) |
 
 ### Server identity
@@ -186,6 +187,13 @@ browsey start --no-agents # or turn the endpoints off entirely
   the machine — treat it like an SSH key.
 - **cwd**: resolved to the nearest agent project already known to the CLI, else the git
   root, else the target folder — so threads land in real projects and reuse their history.
+- **Workspace trust**: Claude Code may refuse a new workspace before Remote Control can
+  register. Browsey detects that prompt and reports the folder as untrusted immediately;
+  it never accepts the security prompt on launch. The mobile app then offers an explicit
+  **Trust Folder** action (`POST /api/agents/trust`), after which you launch again. The
+  server changes only the resolved cwd's `hasTrustDialogAccepted` flag in `~/.claude.json`,
+  first preserving the original as `~/.claude.json.browsey-backup`, then replacing the live
+  config atomically.
 - **Titles**: a thread is named by a small model reading the prompt you sent it, so the list
   in either app reads like a list of tasks rather than one repeated folder name. Codex is
   named a moment after it starts, so the launch does not wait. A Claude session has to be

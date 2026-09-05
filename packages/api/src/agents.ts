@@ -18,6 +18,7 @@ import { nameCodexThread } from './codex-thread-title.js'
 import { FALLBACK_EFFORT_IDS, cachedEffortCatalogue } from './codex-model-catalogue.js'
 import { cachedClaudeCatalogue, refreshClaudeCatalogue } from './claude-model-catalogue.js'
 import { effortOption } from './effort.js'
+import { ClaudeTrustError, trustClaudeWorkspace } from './claude-trust.js'
 import {
   ClaudeRemoteControlError,
   listClaudeSessions,
@@ -28,6 +29,7 @@ import type {
   AgentDescriptor,
   AgentEffortOption,
   AgentLaunchMode,
+  AgentLaunchFailureReason,
   AgentSession,
   AgentFailure,
   AgentCapabilitiesResponse,
@@ -56,7 +58,8 @@ const lastFailures = new Map<AgentId, AgentFailure>()
 export class AgentLaunchError extends Error {
   constructor(
     public status: number,
-    message: string
+    message: string,
+    public reason?: AgentLaunchFailureReason
   ) {
     super(message)
     this.name = 'AgentLaunchError'
@@ -130,6 +133,8 @@ type AgentDefinition = {
   launchMode: AgentLaunchMode
   /** Only `session` agents have anything to list. */
   listSessions?: () => AgentSession[]
+  /** Explicit user action that marks a resolved cwd trusted, when supported. */
+  trustWorkspace?: (cwd: string) => Promise<{ changed: boolean }>
 }
 
 /** A bare `key = "value"` in a TOML file's preamble, before any [section]. */
@@ -156,6 +161,7 @@ const AGENT_DEFINITIONS: Record<AgentId, AgentDefinition> = {
     // still honoured — it just arrives as the session's first turn.
     launchMode: 'session',
     listSessions: listClaudeSessions,
+    trustWorkspace: trustClaudeWorkspace,
     // Claude Code tags each session with the surface it came from, and the
     // desktop app only lists sessions tagged `claude-desktop`. Forcing it stops
     // the value depending on whatever env browsey happened to be started with —
@@ -613,7 +619,9 @@ function readFailureReason(logPath: string): string | null {
 function toLaunchError(error: unknown, command: string): AgentLaunchError {
   if (error instanceof AgentLaunchError) return error
   if (error instanceof CodexAppServerError) return new AgentLaunchError(422, error.message)
-  if (error instanceof ClaudeRemoteControlError) return new AgentLaunchError(422, error.message)
+  if (error instanceof ClaudeRemoteControlError) {
+    return new AgentLaunchError(422, error.message, error.reason)
+  }
   const message = error instanceof Error ? error.message : String(error)
   return new AgentLaunchError(500, `Failed to start ${command}: ${message}`)
 }
@@ -623,6 +631,25 @@ export type SpawnedThread = {
   sessionId: string
   /** Deep link that continues this thread on the phone, when one exists. */
   url?: string
+}
+
+/** Grants trust only for agents that expose an explicit workspace-trust action. */
+export async function trustAgentWorkspace(
+  agent: AgentId,
+  cwd: string
+): Promise<{ changed: boolean }> {
+  const definition = AGENT_DEFINITIONS[agent]
+  if (!definition.trustWorkspace) {
+    throw new AgentLaunchError(400, `${definition.name} does not support workspace trust`)
+  }
+
+  try {
+    return await definition.trustWorkspace(cwd)
+  } catch (error) {
+    if (error instanceof ClaudeTrustError) throw new AgentLaunchError(422, error.message)
+    const message = error instanceof Error ? error.message : String(error)
+    throw new AgentLaunchError(500, `Could not grant workspace trust: ${message}`)
+  }
 }
 
 /**
@@ -755,6 +782,7 @@ export async function spawnAgentThread({
       model,
       effort,
       logFd,
+      logPath,
       env,
       onPhase,
     })

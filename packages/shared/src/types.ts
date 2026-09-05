@@ -388,6 +388,9 @@ export type AgentLaunchRequest = {
   target: AgentLaunchTarget
 }
 
+/** Why a launch failed when the client can offer a specific recovery action. */
+export type AgentLaunchFailureReason = 'workspace-untrusted'
+
 export type AgentLaunchResponse = {
   launched: true
   agent: AgentId
@@ -424,7 +427,27 @@ export type AgentLaunchPhase = 'naming' | 'starting' | 'linking'
 export type AgentLaunchEvent =
   | { event: 'phase'; phase: AgentLaunchPhase }
   | { event: 'launched'; result: AgentLaunchResponse }
-  | { event: 'failed'; error: string; status: number }
+  | {
+      event: 'failed'
+      error: string
+      status: number
+      reason?: AgentLaunchFailureReason
+    }
+
+/** An explicit request to grant the chosen agent trust for a launch target. */
+export type AgentTrustRequest = {
+  agent: AgentId
+  target: Pick<AgentLaunchTarget, 'kind' | 'path'>
+}
+
+export type AgentTrustResponse = {
+  trusted: true
+  agent: AgentId
+  /** Absolute directory that future launches for this target resolve to. */
+  cwd: string
+  /** False when the agent already trusted this exact directory. */
+  changed: boolean
+}
 
 export type AgentStopRequest = {
   sessionId: string

@@ -21,11 +21,12 @@ import {
   refreshAgentModels,
   resolveThreadCwd,
   spawnAgentThread,
+  trustAgentWorkspace,
   validateLaunchRequest,
 } from './agents.js'
 import type { CapabilitiesTarget } from './agents.js'
 import { stopClaudeSession } from './claude-remote-control.js'
-import type { ApiRoutesOptions, FileItem, ListResponse, SyncManifestDirectory, SyncManifestResponse, SearchResult, SearchResponse, GitStatusResponse, GitLogResponse, GitCommitResponse, GitCommitFile, GitChangesResponse, GitRevertResponse, HealthResponse, ViewResponse, SaveTextResponse, AgentLaunchEvent, AgentLaunchResponse, AgentStopRequest, AgentStopResponse } from '@vforsh/browsey-shared'
+import type { ApiRoutesOptions, FileItem, ListResponse, SyncManifestDirectory, SyncManifestResponse, SearchResult, SearchResponse, GitStatusResponse, GitLogResponse, GitCommitResponse, GitCommitFile, GitChangesResponse, GitRevertResponse, HealthResponse, ViewResponse, SaveTextResponse, AgentLaunchEvent, AgentLaunchFailureReason, AgentLaunchResponse, AgentStopRequest, AgentStopResponse, AgentTrustRequest, AgentTrustResponse } from '@vforsh/browsey-shared'
 
 const JSON_HEADERS = {
   'Content-Type': 'application/json',
@@ -298,6 +299,9 @@ async function handleAgentRoute(
   if (route === '/agents/launch' && req.method === 'POST') {
     return handleAgentLaunch(req, options)
   }
+  if (route === '/agents/trust' && req.method === 'POST') {
+    return handleAgentTrust(req, options)
+  }
   if (route === '/agents/stop' && req.method === 'POST') {
     return handleAgentStop(req)
   }
@@ -390,6 +394,64 @@ async function handleAgentStop(req: Request): Promise<Response> {
   return jsonResponse(response)
 }
 
+/**
+ * Trust is deliberately its own authenticated action, never a launch side
+ * effect. The cwd is resolved exactly as launch resolves it, so the affirmative
+ * choice applies to the folder Claude will actually enter rather than merely
+ * the item the user long-pressed.
+ */
+async function handleAgentTrust(req: Request, options: ApiRoutesOptions): Promise<Response> {
+  let body: unknown
+  try {
+    body = await req.json()
+  } catch {
+    return jsonResponse({ error: 'Invalid JSON body' }, { status: 400 })
+  }
+
+  const { agent, target } = (body ?? {}) as Partial<AgentTrustRequest>
+  if (agent !== 'claude-code' && agent !== 'codex') {
+    return jsonResponse({ error: 'Unknown agent' }, { status: 400 })
+  }
+  if (!target || typeof target !== 'object') {
+    return jsonResponse({ error: 'target is required' }, { status: 400 })
+  }
+  if (
+    target.kind !== 'directory' &&
+    target.kind !== 'file' &&
+    target.kind !== 'selection'
+  ) {
+    return jsonResponse({ error: 'target.kind must be directory, file or selection' }, { status: 400 })
+  }
+  if (typeof target.path !== 'string') {
+    return jsonResponse({ error: 'target.path is required' }, { status: 400 })
+  }
+
+  const safePath = resolveSafePath(options.root, target.path)
+  if (!safePath) return jsonResponse({ error: 'Access denied: Invalid path' }, { status: 403 })
+
+  let stat: Awaited<ReturnType<typeof fs.stat>>
+  try {
+    stat = await fs.stat(safePath.fullPath)
+  } catch {
+    return jsonResponse({ error: 'Target path not found' }, { status: 404 })
+  }
+  if (target.kind === 'directory' && !stat.isDirectory()) {
+    return jsonResponse({ error: 'Target path is not a directory' }, { status: 400 })
+  }
+  if (target.kind !== 'directory' && stat.isDirectory()) {
+    return jsonResponse({ error: 'Target path is not a file' }, { status: 400 })
+  }
+
+  try {
+    const { cwd } = await resolveThreadCwd(safePath.fullPath, stat.isDirectory(), agent)
+    const { changed } = await trustAgentWorkspace(agent, cwd)
+    const response: AgentTrustResponse = { trusted: true, agent, cwd, changed }
+    return jsonResponse(response)
+  } catch (error) {
+    return launchErrorResponse(error)
+  }
+}
+
 /** Everything a launch needs, once the request has been found sound. */
 type LaunchPlan = Parameters<typeof spawnAgentThread>[0] & { reused: boolean }
 
@@ -467,9 +529,17 @@ async function planLaunch(
  * status line or in the stream. Only `AgentLaunchError` is trusted to describe
  * itself; anything else is a bug and says nothing.
  */
-function launchFailure(error: unknown): { error: string; status: number } {
+function launchFailure(error: unknown): {
+  error: string
+  status: number
+  reason?: AgentLaunchFailureReason
+} {
   if (error instanceof AgentLaunchError) {
-    return { error: error.message, status: error.status }
+    return {
+      error: error.message,
+      status: error.status,
+      ...(error.reason ? { reason: error.reason } : {}),
+    }
   }
   return { error: 'Internal server error', status: 500 }
 }

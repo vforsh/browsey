@@ -1,8 +1,17 @@
 import { spawn } from 'child_process'
-import { accessSync, constants, readFileSync, readdirSync } from 'fs'
+import {
+  accessSync,
+  closeSync,
+  constants,
+  openSync,
+  readFileSync,
+  readSync,
+  readdirSync,
+  statSync,
+} from 'fs'
 import { homedir } from 'os'
 import { basename, join } from 'path'
-import type { AgentLaunchPhase } from '@vforsh/browsey-shared'
+import type { AgentLaunchFailureReason, AgentLaunchPhase } from '@vforsh/browsey-shared'
 
 /**
  * Claude threads are opened as live Remote Control sessions instead of headless
@@ -16,6 +25,11 @@ import type { AgentLaunchPhase } from '@vforsh/browsey-shared'
  * `--permission-mode` is passed explicitly because without it the first run
  * stops on the "Make auto mode your default permission mode?" prompt, and a
  * session that is waiting on that prompt never registers.
+ *
+ * Claude Code also asks whether a workspace is trusted before registering. It
+ * has no launch flag for that decision, so output is watched and the launch
+ * fails with an actionable reason instead of impersonating a Remote Control
+ * timeout. Trust itself remains a separate, affirmative API action.
  */
 
 /** BSD script, which takes the command as argv after the typescript file. */
@@ -39,7 +53,15 @@ const REGISTER_TIMEOUT_MS = 15_000
 const BRIDGE_TIMEOUT_MS = 8_000
 const POLL_INTERVAL_MS = 150
 
-export class ClaudeRemoteControlError extends Error {}
+export class ClaudeRemoteControlError extends Error {
+  constructor(
+    message: string,
+    public reason?: AgentLaunchFailureReason
+  ) {
+    super(message)
+    this.name = 'ClaudeRemoteControlError'
+  }
+}
 
 export type ClaudeSession = {
   sessionId: string
@@ -161,6 +183,40 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
+/** Enough to cover the complete trust screen without rereading an unbounded log. */
+const REGISTRATION_OUTPUT_BYTES = 64 * 1024
+
+/**
+ * Ink lays text out with cursor-position escapes instead of spaces. Removing
+ * those controls and whitespace reconstructs a stable string to match against.
+ */
+export function hasClaudeWorkspaceTrustPrompt(output: string): boolean {
+  const plain = output
+    .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '')
+    .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '')
+    .replace(/\s/g, '')
+    .toLowerCase()
+  return plain.includes('quicksafetycheck:isthisaprojectyoucreatedoroneyoutrust?')
+}
+
+function registrationNeedsTrust(logPath: string): boolean {
+  try {
+    const { size } = statSync(logPath)
+    if (size === 0) return false
+    const start = Math.max(0, size - REGISTRATION_OUTPUT_BYTES)
+    const fd = openSync(logPath, 'r')
+    try {
+      const buffer = Buffer.alloc(size - start)
+      readSync(fd, buffer, 0, buffer.length, start)
+      return hasClaudeWorkspaceTrustPrompt(buffer.toString('utf-8'))
+    } finally {
+      closeSync(fd)
+    }
+  } catch {
+    return false
+  }
+}
+
 /**
  * The spawned child is `script`, whose pid is not the session's — so the new
  * session is identified by cwd plus not having existed a moment ago.
@@ -168,12 +224,19 @@ function delay(ms: number): Promise<void> {
 async function awaitRegistration(
   cwd: string,
   known: Set<string>,
+  logPath: string,
   onPhase?: PhaseReporter
 ): Promise<ClaudeSession> {
   const deadline = Date.now() + REGISTER_TIMEOUT_MS
   let session: ClaudeSession | null = null
 
   while (Date.now() < deadline && !session) {
+    if (registrationNeedsTrust(logPath)) {
+      throw new ClaudeRemoteControlError(
+        "This folder isn't trusted by Claude Code yet. Trust it, then launch again.",
+        'workspace-untrusted'
+      )
+    }
     session =
       listClaudeSessions().find(
         (candidate) => candidate.cwd === cwd && !known.has(candidate.sessionId)
@@ -227,6 +290,7 @@ export async function startClaudeSession({
   model,
   effort,
   logFd,
+  logPath,
   env,
   onPhase,
 }: {
@@ -253,6 +317,8 @@ export async function startClaudeSession({
   /** Empty string omits the flag, leaving the level to Claude's own config. */
   effort: string
   logFd: number
+  /** Same file as `logFd`, read while waiting for registration prompts. */
+  logPath: string
   env: NodeJS.ProcessEnv
   onPhase?: PhaseReporter
 }): Promise<StartedClaudeSession> {
@@ -287,14 +353,17 @@ export async function startClaudeSession({
   })
 
   try {
-    const session = await awaitRegistration(cwd, known, onPhase)
+    const session = await awaitRegistration(cwd, known, logPath, onPhase)
     child.unref()
     return { session }
   } catch (error) {
     // A session that never registered is invisible on the phone and would only
     // sit there burning a process.
     try {
-      child.kill('SIGTERM')
+      // Detached `script` owns a process group containing Claude. Signalling the
+      // group avoids leaving the blocked child behind when the wrapper exits.
+      if (child.pid) process.kill(-child.pid, 'SIGTERM')
+      else child.kill('SIGTERM')
     } catch {
       // Already gone.
     }

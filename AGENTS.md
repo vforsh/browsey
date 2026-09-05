@@ -138,6 +138,7 @@ browsey pair [target]                 # --url <url>, --name <name>
 | `GET /api/agents?path=/` | Agent capabilities (installed CLIs, model lists with the reasoning levels each model accepts, live sessions; `path` adds the cwd a launch would resolve to) — **bearer token required** |
 | `POST /api/agents/models/refresh` | Force a re-read of the model lists and answer with the resulting capabilities; optional `path` in the body behaves as it does on the GET. `502` when the catalogue could not be fetched, leaving the current lists in place — **bearer token required** |
 | `POST /api/agents/launch` | Launch a Codex thread or open a Claude session, optionally at a given `model` and `effort`; `prompt` is required for Codex and optional for Claude — **bearer token required** |
+| `POST /api/agents/trust` | Explicitly mark the resolved launch cwd trusted in an agent's config; currently supported by Claude Code — **bearer token required** |
 | `POST /api/agents/stop` | End a live Claude session by `sessionId` — **bearer token required** |
 
 ## Key Patterns
@@ -161,6 +162,7 @@ browsey pair [target]                 # --url <url>, --name <name>
 - **The catalogue credential is a cascade, and the last step is undocumented**: `ANTHROPIC_API_KEY` first, since it is the documented way into `/v1/models`; failing that, the OAuth token Claude Code writes to the login keychain (`security find-generic-password -s "Claude Code-credentials"`), which is what a subscription machine actually has. That pairing is not documented and may stop working, so it is the fallback and never the path — and every caller still has `CLAUDE_FALLBACK_MODELS` behind it. An expired token is treated as no token, since a 401 is indistinguishable here from an outage
 - **Codex's list stays hand-picked**: `model/list` is authoritative about levels but advertises far more models than are worth offering, so only the levels are read from it
 - **Codex effort rides on `turn/start`**: `thread/start` has no such parameter, and the turn's value is documented as applying to subsequent turns too, so a thread picked up later in Desktop or on the phone stays at the chosen level
+- **Claude workspace trust stays affirmative**: a Remote Control launch watches its run log for Claude Code's trust screen and fails immediately with `reason: "workspace-untrusted"`. It never answers the prompt itself. `POST /api/agents/trust` resolves the target to the same cwd as launch, changes only that exact project's `hasTrustDialogAccepted` flag in `~/.claude.json`, preserves unrelated bytes, creates `~/.claude.json.browsey-backup` before the first mutation, and replaces the live config atomically
 
 ### Security
 - **Path traversal prevention**: All paths go through `resolveSafePath()` in shared package
