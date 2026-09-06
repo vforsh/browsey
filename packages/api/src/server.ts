@@ -6,12 +6,64 @@ import { handleApiRequest } from './routes.js'
 import { createReloadSSEResponse, startWatcher, stopWatcher } from './live-reload.js'
 import { getBrowseyServiceType, startBonjourAdvertisement } from './bonjour.js'
 import { getServerId } from './server-identity.js'
-import { withCors, corsPreflightResponse } from '@vforsh/browsey-shared'
+import {
+  withCors,
+  corsPreflightResponse,
+  validateToken,
+  describeAccessProtection,
+  ACCESS_TOKEN_HEADER,
+} from '@vforsh/browsey-shared'
 import type { ApiServerOptions, InstanceInfo } from '@vforsh/browsey-shared'
 
 export type ApiServerCallbacks = {
   register: (info: InstanceInfo) => void
   deregister: (pid: number) => void
+}
+
+function accessDeniedResponse(message: string): Response {
+  return new Response(JSON.stringify({ error: message }), {
+    status: 401,
+    headers: {
+      'Content-Type': 'application/json',
+      // Not `Bearer realm="Browsey API"`: that challenge means the agent token,
+      // and a client has to tell the two refusals apart to say which pairing
+      // went stale — without reading the message text.
+      'WWW-Authenticate': 'Browsey-Access',
+    },
+  })
+}
+
+/**
+ * The origin's own gate, in front of routing rather than inside it: when the API
+ * is published through a tunnel, Cloudflare Access is the first line and this is
+ * the second, so it has to cover *every* path — `/api/health` and the live-reload
+ * SSE stream included — and it cannot live in `routes.ts`, which never sees the
+ * reload branch.
+ *
+ * Returns the rejection to send, or `null` to let the request continue. Pure and
+ * exported so the decision can be tested without standing up `Bun.serve`.
+ *
+ * `OPTIONS` is exempt: a CORS preflight carries no custom headers by definition,
+ * so gating it would break the browser before it ever gets to send the token.
+ */
+export function accessTokenGate(req: Request, accessToken: string | undefined): Response | null {
+  if (!accessToken) return null
+  if (req.method === 'OPTIONS') return null
+
+  const { pathname } = new URL(req.url)
+  if (!pathname.startsWith('/api/')) return null
+
+  // Header only. A query parameter would end up in proxy logs and browser
+  // history, which is exactly what this token must never do.
+  const provided = req.headers.get(ACCESS_TOKEN_HEADER)?.trim()
+  if (!provided) {
+    return accessDeniedResponse('Browsey access token required')
+  }
+  if (!validateToken(provided, accessToken)) {
+    return accessDeniedResponse('Invalid Browsey access token')
+  }
+
+  return null
 }
 
 export async function startApiServer(
@@ -78,6 +130,11 @@ export async function startApiServer(
         return corsPreflightResponse(corsOrigin)
       }
 
+      const denied = accessTokenGate(req, options.accessToken)
+      if (denied) {
+        return withCors(denied, corsOrigin)
+      }
+
       // SSE endpoint for live reload
       if (url.pathname === '/api/reload') {
         return withCors(createReloadSSEResponse(), corsOrigin)
@@ -141,6 +198,7 @@ export async function startApiServer(
     console.log(`  \x1b[2mMode:\x1b[0m    ${options.readonly ? 'read-only' : 'read-write'}`)
     console.log(`  \x1b[2mBonjour:\x1b[0m ${bonjourStatus}`)
     console.log(`  \x1b[2mCORS:\x1b[0m    ${corsOrigin}`)
+    console.log(`  \x1b[2mAccess:\x1b[0m  ${describeAccessProtection(options.accessToken)}`)
     console.log(
       `  \x1b[2mAgents:\x1b[0m  ${
         options.agents.enabled
@@ -183,6 +241,9 @@ export async function startApiServer(
     watch: options.watch,
     corsOrigin: options.corsOrigin,
     agents: options.agents.enabled,
+    accessToken: Boolean(options.accessToken),
+    ...(options.accessTokenFile ? { accessTokenFile: options.accessTokenFile } : {}),
+    ...(options.accessTokenFromEnv ? { accessTokenFromEnv: true } : {}),
   })
 
   const shutdown = () => {

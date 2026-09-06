@@ -21,6 +21,19 @@ export type ApiServerOptions = {
   watch: boolean
   corsOrigin: string
   agents: AgentsOptions
+  /**
+   * Server-wide origin secret. When set, every `/api/*` request must carry it in
+   * `X-Browsey-Access-Token`; absent, the server is unprotected as before.
+   * Deliberately separate from `agents.token`, which is a narrower privilege on
+   * `/api/agents/*` and travels in `Authorization`.
+   */
+  accessToken?: string
+  /**
+   * Where `accessToken` came from, recorded so a reload can resolve the *same*
+   * secret instead of minting a fresh one. Paths and flags only — never a value.
+   */
+  accessTokenFile?: string
+  accessTokenFromEnv?: boolean
   quiet?: boolean
 }
 
@@ -152,6 +165,16 @@ export interface InstanceInfo {
   corsOrigin?: string
   /** Agent launch endpoints. Absent on registry entries written before agents existed. */
   agents?: boolean
+  /**
+   * Whether this instance requires `X-Browsey-Access-Token`. A flag, never the
+   * value — the registry is a plain-text file. `accessTokenFile` and
+   * `accessTokenFromEnv` record *where* the value came from so a reload can
+   * resolve the same one; a reload that cannot must refuse rather than mint a
+   * different secret and lock out every paired phone.
+   */
+  accessToken?: boolean
+  accessTokenFile?: string
+  accessTokenFromEnv?: boolean
 }
 
 export interface RegistryFile {
@@ -386,6 +409,15 @@ export type AgentLaunchRequest = {
   /** One of the levels the chosen model advertises. Omittable, same as above. */
   effort?: string
   target: AgentLaunchTarget
+  /**
+   * An opaque id the client mints *before* it sends the launch, which is what
+   * makes the launch addressable before a single byte comes back: a client
+   * whose stream dies mid-launch reattaches to it with
+   * `GET /api/agents/launch/events`. At most 128 characters of `[A-Za-z0-9_-]`.
+   * Omitting it is legal and is what clients built before resume do — they
+   * simply cannot reattach.
+   */
+  launchId?: string
 }
 
 /** Why a launch failed when the client can offer a specific recovery action. */
@@ -416,15 +448,15 @@ export type AgentLaunchResponse = {
 export type AgentLaunchPhase = 'naming' | 'starting' | 'linking'
 
 /**
- * One NDJSON line of a streaming launch, requested with
- * `Accept: application/x-ndjson`.
+ * What one NDJSON line of a streaming launch says, before the stream numbers
+ * it. Requested with `Accept: application/x-ndjson`.
  *
  * A stream always ends in exactly one terminal event. `failed` carries the
  * status the plain-JSON route would have answered with, because by the time a
  * phase has gone out the response is already committed to 200 and the code can
  * no longer be said in the status line.
  */
-export type AgentLaunchEvent =
+export type AgentLaunchEventBody =
   | { event: 'phase'; phase: AgentLaunchPhase }
   | { event: 'launched'; result: AgentLaunchResponse }
   | {
@@ -433,6 +465,28 @@ export type AgentLaunchEvent =
       status: number
       reason?: AgentLaunchFailureReason
     }
+
+/**
+ * A launch event as it goes on the wire, numbered from 1 per launch.
+ *
+ * `seq` is what makes a dropped stream recoverable: a client reattaches with
+ * `GET /api/agents/launch/events?id=&since=<highest seq seen>` and is sent the
+ * rest, so an event with a `seq` it has already applied can simply be dropped
+ * and a full replay is idempotent. A server built before resume sends no `seq`
+ * at all, which is why a client must treat it as optional.
+ */
+export type AgentLaunchEvent = AgentLaunchEventBody & { seq: number }
+
+/**
+ * Transport-level keepalive, written every 15 s while a launch stream is open —
+ * Cloudflare cuts an idle tunnel connection at 100 s and a cold start can run
+ * well past that. Deliberately carries no `seq`: it is never buffered for
+ * replay and never surfaced as a thread event.
+ */
+export type AgentLaunchHeartbeat = { event: 'heartbeat' }
+
+/** Anything a launch stream may write, event or keepalive. */
+export type AgentLaunchStreamLine = AgentLaunchEvent | AgentLaunchHeartbeat
 
 /** An explicit request to grant the chosen agent trust for a launch target. */
 export type AgentTrustRequest = {

@@ -91,6 +91,8 @@ bunx browsey start ./photos --open
 | `--https-key <path>` | Path to TLS private key (PEM) | `./certs/browsey-key.pem` |
 | `--no-agents` | Disable the agent thread launch endpoints | `false` (agents on) |
 | `--agents-token <token>` | Use this agent token instead of the persisted one | - |
+| `--access-token` | Require `X-Browsey-Access-Token`, read from `~/.browsey/access-token` | `false` (unprotected) |
+| `--access-token-file <path>` | Require `X-Browsey-Access-Token`, read from this file | - |
 
 ## API
 
@@ -112,7 +114,11 @@ Browsey exposes a simple REST API:
 | `GET /api/agents/skills?agent=claude-code&path=/` | Skills the agent would see for a launch at `path`: its global ones plus the project's, from the folder up to the git root (**bearer token required**) |
 | `POST /api/agents/launch` | Start a Codex thread, or open a Claude session (**bearer token required**) |
 | `POST /api/agents/trust` | Trust the resolved launch folder for agents that require it (**bearer token required**) |
+| `GET /api/agents/launch/events?id=&since=` | Reattach to a launch whose stream dropped; replays every event after `since`, then follows it live (**bearer token required**) |
 | `POST /api/agents/stop` | End a live Claude session (**bearer token required**) |
+
+When the server runs with an [access token](#access-token), *every* row above additionally
+requires an `X-Browsey-Access-Token` header — health included.
 
 ### Server identity
 
@@ -153,6 +159,82 @@ not be inferred or transferred based on a matching public ID.
   ]
 }
 ```
+
+## Access token
+
+Browsey is **unprotected by default**: anything that can reach the port can use the API.
+That is the right trade for a LAN, and it is why nothing below changes unless you ask for
+it. Turn the access token on when the API is reachable from anywhere else — published
+through a Cloudflare Tunnel, say, where this is the origin's own second line of defence
+behind whatever guards the edge.
+
+```bash
+browsey start --access-token                      # mints ~/.browsey/access-token (0600)
+browsey start --access-token-file /etc/browsey.tk # or read one you manage yourself
+BROWSEY_ACCESS_TOKEN=… browsey start              # or from the environment (launchd, systemd)
+```
+
+- **Never as a flag value.** There is no `--access-token <value>`: a process list is
+  readable by every user on the machine and shell history keeps it forever. The token comes
+  from the environment, from a file, or from the default file — nothing else.
+- **Resolution order**: `BROWSEY_ACCESS_TOKEN`, then `--access-token-file <path>`, then
+  `--access-token` (the default file, minted on first use like the agent token). If none of
+  them resolve, protection stays off.
+- **What it covers**: every path under `/api/`, checked before routing — `/api/health`, the
+  live-reload SSE stream, media, mutations, Git and the agent routes alike. `OPTIONS` is
+  exempt so CORS preflight still works.
+- **The header** is `X-Browsey-Access-Token`, exact case. Never a query parameter: those end
+  up in proxy logs and browser history. The comparison is constant-time.
+- **Rejections** are `401` with `{"error": "Browsey access token required"}` when the header
+  is missing and `{"error": "Invalid Browsey access token"}` when it is wrong. The received
+  value is never echoed back or logged.
+- **Separate from the agent token.** `Authorization: Bearer <agent-token>` keeps its current
+  meaning on `/api/agents/*` only. A protected server requires **both** there: the access
+  token first, then the bearer.
+- **`browsey api reload`** re-resolves the token from the environment or the default file.
+  The instance registry records only *that* protection was on, never the value.
+
+### The bundled web UI does not send it
+
+The browser UI (`browsey app`, `browsey start`) has no way to learn the token, and Browsey
+deliberately does not inject one into the served HTML — that would hand it to every browser
+on the LAN. **A protected server is an API-only, mobile-app setup.** If you want the web UI,
+run without the access token and keep the server on the LAN.
+
+## Pairing a remote origin
+
+`browsey pair` prints a JSON QR payload — JSON rather than a URL, so a stray scan by a stock
+camera app cannot turn the secrets into an HTTP request. Payloads stay at `v: 1` unless
+there is something remote to carry, so older clients keep pairing exactly as before.
+
+```bash
+browsey pair                                          # v1: agent token + LAN URL
+browsey pair --url https://browsey.example.com \
+             --access-token \
+             --cf-credentials-file ~/.cloudflared/browsey-service-token.json
+```
+
+```jsonc
+{
+  "v": 2,
+  "kind": "browsey-pair",
+  "url": "https://browsey.example.com",
+  "name": "Studio",
+  "token": "<agent token>",                                  // optional
+  "access": "<access token>",                                // optional
+  "cf": { "id": "<client id>", "secret": "<client secret>" }  // optional
+}
+```
+
+- **Cloudflare Access credentials** come from `CF_ACCESS_CLIENT_ID` + `CF_ACCESS_CLIENT_SECRET`
+  or from `--cf-credentials-file <path>`, a JSON file `{"id": "…", "secret": "…"}`. Both
+  halves are required; never as flag values.
+- **HTTPS is mandatory** for `access` and `cf`. Pairing a plain-HTTP URL with either of them
+  is refused outright — pass `--url https://<your tunnel hostname>`.
+- **Protection is detected**, not assumed: if the running instance requires an access token,
+  `pair` includes it without being asked. `--access-token` / `--access-token-file` force it.
+- Agent-only and remote-only pairing are both legal. The QR carries whichever of the two
+  credentials actually resolved.
 
 ## Agent threads
 

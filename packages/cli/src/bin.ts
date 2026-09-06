@@ -1,14 +1,16 @@
 import { Command } from 'commander'
 import getPort from 'get-port'
+import { readFileSync } from 'fs'
 import { resolve } from 'path'
 import { hostname, networkInterfaces } from 'os'
 import qrcode from 'qrcode-terminal'
 import { startApiServer } from '@vforsh/browsey-api'
 import { startAppServer } from '@vforsh/browsey-app'
-import { parseIgnorePatterns } from '@vforsh/browsey-shared'
+import { parseIgnorePatterns, describeAccessProtection } from '@vforsh/browsey-shared'
 import type { AgentsOptions, InstanceInfo } from '@vforsh/browsey-shared'
 import { listInstances, findAllMatchingInstances, stopInstance, register, deregister, parseTarget } from './registry.js'
 import { getAgentTokenPath, readAgentToken, readOrCreateAgentToken } from './agent-token.js'
+import { getAccessTokenPath, readAccessToken, readAccessTokenFile, readOrCreateAccessToken } from './access-token.js'
 
 export const VERSION = '0.1.0'
 
@@ -23,6 +25,154 @@ function resolveAgentsOptions(options: Record<string, unknown>): AgentsOptions {
 
   const override = (options.agentsToken as string | undefined)?.trim()
   return { enabled: true, token: override || readOrCreateAgentToken() }
+}
+
+/**
+ * The server-wide access token, or undefined to leave the API unprotected — the
+ * default, so every existing LAN setup and every older client keeps working.
+ *
+ * Never a raw token in `argv`: a process list is readable by every user on the
+ * machine and shell history keeps it forever. Hence a boolean flag, a path, or
+ * the environment — the environment first, so a launchd-managed instance can be
+ * configured entirely outside the command line.
+ *
+ * `createDefault` is the difference between starting a server (mint the default
+ * file if it is not there yet, exactly as the agent token does) and reporting on
+ * one (`browsey pair`, which must never invent a token the server is not using).
+ */
+type ResolvedAccessToken = {
+  token: string
+  /** Recorded in the registry so a reload resolves this same secret again. */
+  file?: string
+  fromEnv?: boolean
+}
+
+function resolveAccessToken(
+  options: Record<string, unknown>,
+  { createDefault }: { createDefault: boolean }
+): ResolvedAccessToken | undefined {
+  const fromEnv = process.env.BROWSEY_ACCESS_TOKEN?.trim()
+  if (fromEnv) return { token: fromEnv, fromEnv: true }
+
+  const file = (options.accessTokenFile as string | undefined)?.trim()
+  if (file) {
+    const path = resolve(file)
+    const token = readAccessTokenFile(path)
+    if (!token) {
+      console.error(`Error: Could not read an access token from ${path}`)
+      process.exit(1)
+    }
+    return { token, file: path }
+  }
+
+  if (((options.accessToken as boolean) ?? false) === false) {
+    return undefined
+  }
+
+  if (createDefault) {
+    return { token: readOrCreateAccessToken(), file: getAccessTokenPath() }
+  }
+
+  const token = readAccessToken()
+  if (!token) {
+    console.error('Error: No access token found.')
+    console.error(`Expected at ${getAccessTokenPath()}.`)
+    console.error('Start a server with --access-token first, or pass --access-token-file <path>.')
+    process.exit(1)
+  }
+  return { token, file: getAccessTokenPath() }
+}
+
+/** Spreads a resolved token into the server options, or nothing at all. */
+function accessOptions(
+  resolved: ResolvedAccessToken | undefined
+): {
+  accessToken?: string
+  accessTokenFile?: string
+  accessTokenFromEnv?: boolean
+} {
+  if (!resolved) return {}
+  return {
+    accessToken: resolved.token,
+    ...(resolved.file ? { accessTokenFile: resolved.file } : {}),
+    ...(resolved.fromEnv ? { accessTokenFromEnv: true } : {}),
+  }
+}
+
+/**
+ * The token a reload must come back up with: the same one, from wherever the
+ * running instance got it. Refusing is the safe failure here — a reload that
+ * quietly mints a different secret leaves the server protected and every
+ * paired phone locked out, which is worse than not reloading.
+ */
+function reloadAccessToken(source: {
+  accessTokenFile?: string
+  accessTokenFromEnv?: boolean
+}): ResolvedAccessToken {
+  if (source.accessTokenFromEnv) {
+    const fromEnv = process.env.BROWSEY_ACCESS_TOKEN?.trim()
+    if (fromEnv) return { token: fromEnv, fromEnv: true }
+    console.error('Error: This instance took its access token from BROWSEY_ACCESS_TOKEN,')
+    console.error('which is not set in this shell. Set it and reload again, or stop the')
+    console.error('instance and start a new one.')
+    process.exit(1)
+  }
+  const path = source.accessTokenFile ?? getAccessTokenPath()
+  const token = readAccessTokenFile(path)
+  if (!token) {
+    console.error(`Error: This instance took its access token from ${path},`)
+    console.error('which can no longer be read. Restore it and reload again.')
+    process.exit(1)
+  }
+  return { token, file: path }
+}
+
+/** Cloudflare Access service token: the pair that gets a request past the edge. */
+type CloudflareServiceToken = {
+  id: string
+  secret: string
+}
+
+/**
+ * Same rule as the access token — secrets arrive through the environment or a
+ * file, never as flag values. A half pair is an error rather than a payload the
+ * client would have to reject.
+ */
+function resolveCloudflareCredentials(
+  options: Record<string, unknown>
+): CloudflareServiceToken | undefined {
+  const envId = process.env.CF_ACCESS_CLIENT_ID?.trim()
+  const envSecret = process.env.CF_ACCESS_CLIENT_SECRET?.trim()
+  if (envId || envSecret) {
+    if (!envId || !envSecret) {
+      console.error('Error: CF_ACCESS_CLIENT_ID and CF_ACCESS_CLIENT_SECRET must both be set.')
+      process.exit(1)
+    }
+    return { id: envId, secret: envSecret }
+  }
+
+  const file = (options.cfCredentialsFile as string | undefined)?.trim()
+  if (!file) return undefined
+
+  const path = resolve(file)
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(readFileSync(path, 'utf-8'))
+  } catch (error) {
+    console.error(`Error: Could not read Cloudflare credentials from ${path}`)
+    console.error(`  ${error instanceof Error ? error.message : String(error)}`)
+    process.exit(1)
+  }
+
+  const record = parsed as { id?: unknown; secret?: unknown } | null
+  const id = typeof record?.id === 'string' ? record.id.trim() : ''
+  const secret = typeof record?.secret === 'string' ? record.secret.trim() : ''
+  if (!id || !secret) {
+    console.error(`Error: ${path} must be a JSON object with non-empty "id" and "secret".`)
+    process.exit(1)
+  }
+
+  return { id, secret }
 }
 
 const program = new Command()
@@ -53,6 +203,8 @@ const apiCommand = new Command('api')
   .option('--cors <origin>', 'CORS allowed origin', '*')
   .option('--no-agents', 'Disable the agent thread launch endpoints')
   .option('--agents-token <token>', 'Use this agent token instead of the persisted one')
+  .option('--access-token', `Require X-Browsey-Access-Token, read from ${getAccessTokenPath()}`)
+  .option('--access-token-file <path>', 'Require X-Browsey-Access-Token, read from this file')
   .action(async (pathArg: string, options: Record<string, unknown>) => {
     const requestedPort = parseInt(options.port as string, 10)
     if (isNaN(requestedPort) || requestedPort < 1 || requestedPort > 65535) {
@@ -91,6 +243,7 @@ const apiCommand = new Command('api')
         watch: (options.watch as boolean) ?? false,
         corsOrigin: (options.cors as string) ?? '*',
         agents: resolveAgentsOptions(options),
+        ...accessOptions(resolveAccessToken(options, { createDefault: true })),
       },
       { register, deregister }
     )
@@ -146,6 +299,9 @@ apiCommand
       watch,
       corsOrigin,
       agents,
+      accessToken,
+      accessTokenFile,
+      accessTokenFromEnv,
     } = instance
 
     // Stop the instance
@@ -172,6 +328,15 @@ apiCommand
         watch: watch ?? false,
         corsOrigin: corsOrigin ?? '*',
         agents: resolveAgentsOptions({ agents: agents ?? true }),
+        // The registry records only that protection was on and where the value
+        // came from, never the value. A reload must neither drop the origin's
+        // defences nor mint a *different* secret — the second would lock out
+        // every phone already paired with this server.
+        ...accessOptions(
+          accessToken
+            ? reloadAccessToken({ accessTokenFile, accessTokenFromEnv })
+            : undefined
+        ),
       },
       { register, deregister }
     )
@@ -321,6 +486,8 @@ const startCommand = new Command('start')
   .option('--cors <origin>', 'CORS allowed origin', '*')
   .option('--no-agents', 'Disable the agent thread launch endpoints')
   .option('--agents-token <token>', 'Use this agent token instead of the persisted one')
+  .option('--access-token', `Require X-Browsey-Access-Token, read from ${getAccessTokenPath()}`)
+  .option('--access-token-file <path>', 'Require X-Browsey-Access-Token, read from this file')
   .option('--open', 'Open browser automatically')
   .action(async (pathArg: string, options: Record<string, unknown>) => {
     // Validate API port
@@ -359,6 +526,7 @@ const startCommand = new Command('start')
     const protocol = httpsEnabled ? 'https' : 'http'
     const rootPath = resolve(pathArg)
     const agentsOptions = resolveAgentsOptions(options)
+    const access = resolveAccessToken(options, { createDefault: true })
 
     // Start API server (quiet mode)
     const { shutdown: apiShutdown } = await startApiServer(
@@ -378,6 +546,7 @@ const startCommand = new Command('start')
         watch: (options.watch as boolean) ?? false,
         corsOrigin: (options.cors as string) ?? '*',
         agents: agentsOptions,
+        ...accessOptions(access),
         quiet: true,
       },
       { register, deregister }
@@ -423,6 +592,7 @@ const startCommand = new Command('start')
     console.log()
     console.log(`  \x1b[2mServing:\x1b[0m ${rootPath}`)
     console.log(`  \x1b[2mMode:\x1b[0m    ${(options.readonly as boolean) ?? true ? 'read-only' : 'read-write'}`)
+    console.log(`  \x1b[2mAccess:\x1b[0m  ${describeAccessProtection(access?.token)}`)
     console.log(
       `  \x1b[2mAgents:\x1b[0m  ${
         agentsOptions.enabled
@@ -462,46 +632,105 @@ program
   .command('pair')
   .description('Show the agent token and a pairing QR code for the mobile app')
   .argument('[target]', 'PID, :port, or path substring of the API instance to pair with')
-  .option('--url <url>', 'Override the URL advertised in the QR payload')
+  .option('--url <url>', 'Override the URL advertised in the QR payload (e.g. the tunnel hostname)')
   .option('--name <name>', 'Override the machine name shown in the app')
-  .action((target: string | undefined, options: { url?: string; name?: string }) => {
+  .option('--access-token', `Include the access token from ${getAccessTokenPath()}`)
+  .option('--access-token-file <path>', 'Include the access token read from this file')
+  .option(
+    '--cf-credentials-file <path>',
+    'Include a Cloudflare Access service token from this JSON file: {"id": "...", "secret": "..."}'
+  )
+  .action((target: string | undefined, options: Record<string, unknown>) => {
+    const urlOverride = (options.url as string | undefined)?.trim()
+    // A target the user typed is still resolved strictly even alongside --url,
+    // so a typo is an error rather than a silently unprotected payload.
+    const instance = resolvePairInstance(target, Boolean(target) || !urlOverride)
+
+    const url = urlOverride ?? (instance ? instancePairUrl(instance) : null)
+    if (!url) {
+      console.error('Error: Could not determine the API URL.')
+      console.error('Start an API instance, or pass --url https://<host>')
+      process.exit(1)
+    }
+
+    let parsedUrl: URL
+    try {
+      parsedUrl = new URL(url)
+    } catch {
+      console.error(`Error: Invalid URL: ${url}`)
+      process.exit(1)
+    }
+
+    // Asked for explicitly, or inferred from the instance the phone will talk to
+    // — a protected server that paired without its token is a phone that 401s on
+    // its very first request.
+    const accessRequested =
+      Boolean(options.accessToken) ||
+      Boolean(options.accessTokenFile) ||
+      Boolean(process.env.BROWSEY_ACCESS_TOKEN?.trim()) ||
+      instance?.accessToken === true
+    const access = accessRequested
+      ? resolveAccessToken({ ...options, accessToken: true }, { createDefault: false })
+      : undefined
+    const cf = resolveCloudflareCredentials(options)
+
+    if ((access || cf) && parsedUrl.protocol !== 'https:') {
+      console.error(`Error: Refusing to put remote credentials in a payload for ${url}`)
+      console.error('Access tokens and Cloudflare credentials require an https: URL.')
+      console.error('Pass --url https://<your tunnel hostname>, or serve the LAN over TLS')
+      console.error('with --https --https-cert <pem> --https-key <pem>.')
+      process.exit(1)
+    }
+
     const token = readAgentToken()
-    if (!token) {
+    if (!token && !access && !cf) {
       console.error('Error: No agent token found.')
       console.error(`Expected at ${getAgentTokenPath()}.`)
       console.error('Start a server with agents enabled first (they are on by default).')
       process.exit(1)
     }
 
-    const url = options.url ?? resolvePairUrl(target)
-    if (!url) {
-      console.error('Error: Could not determine the API URL.')
-      console.error('Start an API instance, or pass --url http://<host>:<port>')
-      process.exit(1)
-    }
-
-    const name = options.name ?? hostname()
-    // JSON, not a URL: a stray scan by a stock camera app must not turn the
-    // token into an HTTP GET or a browser history entry.
-    const payload = JSON.stringify({ v: 1, kind: 'browsey-pair', url, token, name })
+    const name = (options.name as string | undefined) ?? hostname()
+    // JSON, not a URL: a stray scan by a stock camera app must not turn these
+    // secrets into an HTTP GET or a browser history entry. v1 stays on the wire
+    // whenever there is nothing remote to carry, so older clients keep pairing.
+    const payload = JSON.stringify({
+      v: access || cf ? 2 : 1,
+      kind: 'browsey-pair',
+      url,
+      name,
+      ...(token ? { token } : {}),
+      ...(access ? { access } : {}),
+      ...(cf ? { cf } : {}),
+    })
 
     console.log()
     console.log('  \x1b[1mBrowsey pairing\x1b[0m')
     console.log()
     console.log(`  \x1b[2mServer:\x1b[0m ${url}`)
     console.log(`  \x1b[2mName:\x1b[0m   ${name}`)
-    console.log(`  \x1b[2mToken:\x1b[0m  ${token}`)
+    if (token) {
+      console.log(`  \x1b[2mToken:\x1b[0m  ${token}`)
+    }
+    if (access) {
+      console.log('  \x1b[2mAccess:\x1b[0m in the QR payload')
+    }
+    if (cf) {
+      console.log(`  \x1b[2mCF:\x1b[0m     ${cf.id} (secret in the QR payload)`)
+    }
     console.log()
     console.log('  \x1b[2mScan in Browsey (Connect → Scan QR):\x1b[0m')
     console.log()
     qrcode.generate(payload, { small: true })
     console.log()
-    console.log('  \x1b[2mAnyone with this token can run agents on this machine.\x1b[0m')
-    console.log()
+    if (token) {
+      console.log('  \x1b[2mAnyone with this token can run agents on this machine.\x1b[0m')
+      console.log()
+    }
   })
 
-/** Network URL of the API instance to pair with, preferring an explicit target. */
-function resolvePairUrl(target: string | undefined): string | null {
+/** The API instance to pair with, preferring an explicit target. */
+function resolvePairInstance(target: string | undefined, strict: boolean): InstanceInfo | null {
   const apiInstances = listInstances().filter((instance) => instance.kind === 'api')
   if (apiInstances.length === 0) return null
 
@@ -510,10 +739,12 @@ function resolvePairUrl(target: string | undefined): string | null {
     : apiInstances
 
   if (matching.length === 0) {
+    if (!strict) return null
     console.error(`Error: No API instance found matching "${target}"`)
     process.exit(1)
   }
   if (matching.length > 1) {
+    if (!strict) return null
     console.error(`Found ${matching.length} API instances:`)
     for (const instance of matching) {
       console.error(`  PID ${instance.pid}: ${instance.rootPath} (port ${instance.port})`)
@@ -522,7 +753,11 @@ function resolvePairUrl(target: string | undefined): string | null {
     process.exit(1)
   }
 
-  const instance = matching[0]!
+  return matching[0]!
+}
+
+/** Network URL an instance is reachable at from the LAN. */
+function instancePairUrl(instance: InstanceInfo): string {
   const protocol = instance.https ? 'https' : 'http'
   const isWildcard = instance.host === '0.0.0.0' || instance.host === '::'
   const host = isWildcard ? getNetworkIp() ?? '127.0.0.1' : instance.host

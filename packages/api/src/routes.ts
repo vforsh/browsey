@@ -14,6 +14,7 @@ import {
 import type { IgnoreMatcher } from '@vforsh/browsey-shared'
 import { findGitRoot, getGitStatus, getGitLog, getGitCommit, getGitChanges, revertGitFile, GitOperationError } from './git.js'
 import { entryExtension, readDirectoryItems, readSymlinkTarget, toServedPath } from './directory-listing.js'
+import { conditionalJsonResponse } from './conditional.js'
 import {
   AgentLaunchError,
   buildThreadPrompt,
@@ -26,9 +27,19 @@ import {
   validateLaunchRequest,
 } from './agents.js'
 import type { CapabilitiesTarget } from './agents.js'
+import {
+  appendLaunchEvent,
+  eventsSince,
+  getLaunch,
+  isTerminalLaunchEvent,
+  isValidLaunchId,
+  registerLaunch,
+  subscribeToLaunch,
+} from './launch-registry.js'
+import type { LaunchEntry } from './launch-registry.js'
 import { listAgentSkills, skillLookupDir } from './agent-skills.js'
 import { stopClaudeSession } from './claude-remote-control.js'
-import type { ApiRoutesOptions, FileItem, ListResponse, SyncManifestDirectory, SyncManifestResponse, SearchResult, SearchResponse, GitStatusResponse, GitLogResponse, GitCommitResponse, GitCommitFile, GitChangesResponse, GitRevertResponse, HealthResponse, ViewResponse, SaveTextResponse, AgentLaunchEvent, AgentLaunchFailureReason, AgentLaunchResponse, AgentStopRequest, AgentStopResponse, AgentTrustRequest, AgentTrustResponse } from '@vforsh/browsey-shared'
+import type { ApiRoutesOptions, FileItem, ListResponse, SyncManifestDirectory, SyncManifestResponse, SearchResult, SearchResponse, GitStatusResponse, GitLogResponse, GitCommitResponse, GitCommitFile, GitChangesResponse, GitRevertResponse, HealthResponse, ViewResponse, SaveTextResponse, AgentLaunchEvent, AgentLaunchEventBody, AgentLaunchFailureReason, AgentLaunchRequest, AgentLaunchResponse, AgentLaunchStreamLine, AgentStopRequest, AgentStopResponse, AgentTrustRequest, AgentTrustResponse } from '@vforsh/browsey-shared'
 
 const JSON_HEADERS = {
   'Content-Type': 'application/json',
@@ -221,7 +232,7 @@ export async function handleApiRequest(
     return jsonResponse(getHealthResponse(options.readonly, options.serverId))
   }
   if (route === '/list') {
-    return handleList(url, options)
+    return handleList(req, url, options)
   }
   if (route === '/sync/manifest') {
     return handleSyncManifest(url, options)
@@ -230,7 +241,7 @@ export async function handleApiRequest(
     return handleFile(req, url, options)
   }
   if (route === '/view') {
-    return handleView(url, options)
+    return handleView(req, url, options)
   }
   if (route === '/stat') {
     return handleStat(url, options)
@@ -269,7 +280,7 @@ export async function handleApiRequest(
     return handleCopy(req, options)
   }
   if (route === '/agents' || route.startsWith('/agents/')) {
-    return handleAgentRoute(req, route, options)
+    return handleAgentRoute(req, route, url, options)
   }
 
   return jsonResponse({ error: 'Not found' }, { status: 404 })
@@ -283,6 +294,7 @@ export async function handleApiRequest(
 async function handleAgentRoute(
   req: Request,
   route: string,
+  url: URL,
   options: ApiRoutesOptions
 ): Promise<Response> {
   if (!options.agents.enabled) {
@@ -303,6 +315,9 @@ async function handleAgentRoute(
   }
   if (route === '/agents/launch' && req.method === 'POST') {
     return handleAgentLaunch(req, options)
+  }
+  if (route === '/agents/launch/events' && req.method === 'GET') {
+    return handleAgentLaunchEvents(url)
   }
   if (route === '/agents/trust' && req.method === 'POST') {
     return handleAgentTrust(req, options)
@@ -493,20 +508,13 @@ const LAUNCH_STREAM_MIME = 'application/x-ndjson'
  * agent is spawning has to be reported inside an already-200 stream.
  */
 async function planLaunch(
-  req: Request,
+  body: unknown,
   options: ApiRoutesOptions
-): Promise<{ plan: LaunchPlan } | { error: Response }> {
+): Promise<{ plan: LaunchPlan } | { failure: LaunchFailure }> {
   /** A launch that never started, so it can still be refused with a status. */
   const reject = (message: string, status: number) => ({
-    error: jsonResponse({ error: message }, { status }),
+    failure: { error: message, status },
   })
-
-  let body: unknown
-  try {
-    body = await req.json()
-  } catch {
-    return reject('Invalid JSON body', 400)
-  }
 
   try {
     const { agent, prompt, model, effort, target } = validateLaunchRequest(body)
@@ -542,8 +550,15 @@ async function planLaunch(
 
     return { plan: { agent, cwd, prompt, finalPrompt, model, effort, reused } }
   } catch (error) {
-    return { error: launchErrorResponse(error) }
+    return { failure: launchFailure(error) }
   }
+}
+
+/** A refusal, said the same way whether it lands in a status line or a stream. */
+type LaunchFailure = {
+  error: string
+  status: number
+  reason?: AgentLaunchFailureReason
 }
 
 /**
@@ -551,11 +566,7 @@ async function planLaunch(
  * status line or in the stream. Only `AgentLaunchError` is trusted to describe
  * itself; anything else is a bug and says nothing.
  */
-function launchFailure(error: unknown): {
-  error: string
-  status: number
-  reason?: AgentLaunchFailureReason
-} {
+function launchFailure(error: unknown): LaunchFailure {
   if (error instanceof AgentLaunchError) {
     return {
       error: error.message,
@@ -582,28 +593,93 @@ function launchResult(plan: LaunchPlan, sessionId?: string, url?: string): Agent
   }
 }
 
+const launchEncoder = new TextEncoder()
+
+/**
+ * The single place a launch line becomes bytes. Replay goes through it too, so
+ * an event a reattaching client receives is byte for byte the one it missed.
+ */
+function encodeLaunchLine(line: AgentLaunchStreamLine): Uint8Array {
+  return launchEncoder.encode(`${JSON.stringify(line)}\n`)
+}
+
+/** Cloudflare cuts an idle tunnel connection at 100 s; a cold start can outlast it. */
+const LAUNCH_HEARTBEAT_MS = 15_000
+
+const launchStreamHeaders = {
+  'Content-Type': LAUNCH_STREAM_MIME,
+  'Cache-Control': 'no-store',
+}
+
+/**
+ * A writer onto a launch stream that has stopped caring whether anyone is
+ * listening: a client that navigated away (or a tunnel that dropped) leaves
+ * nothing to write to, and the launch itself is deliberately allowed to finish
+ * regardless — the session it started is real whether or not anyone heard about
+ * it, which is exactly why the registry keeps the events.
+ */
+function launchWriter(controller: ReadableStreamDefaultController<Uint8Array>) {
+  let open = true
+  const write = (line: AgentLaunchStreamLine) => {
+    if (!open) return
+    try {
+      controller.enqueue(encodeLaunchLine(line))
+    } catch {
+      open = false
+    }
+  }
+
+  const heartbeat = setInterval(() => write({ event: 'heartbeat' }), LAUNCH_HEARTBEAT_MS)
+  const stop = () => {
+    clearInterval(heartbeat)
+    open = false
+  }
+
+  return {
+    write,
+    /** Ends the stream, if it is still there to end. Safe to call twice. */
+    close: () => {
+      const wasOpen = open
+      stop()
+      if (wasOpen) {
+        try {
+          controller.close()
+        } catch {
+          // Already torn down by the runtime; nothing left to do.
+        }
+      }
+    },
+    /** The consumer went away: drop the timer, leave the launch running. */
+    abandon: stop,
+  }
+}
+
 /**
  * Runs the launch, reporting each phase as its own NDJSON line so a client can
  * narrate a wait that is mostly one slow step. Exactly one terminal event is
  * written, and the response is committed to 200 the moment the first line goes
  * out — which is why a failure is an event here rather than a status.
+ *
+ * Every event is numbered and, when the client minted a `launchId`, buffered in
+ * the registry — a launch whose stream dies is resumed rather than lost.
  */
-function streamLaunch(plan: LaunchPlan): Response {
-  const encoder = new TextEncoder()
+function streamLaunch(plan: LaunchPlan, entry: LaunchEntry | null): Response {
+  let writer: ReturnType<typeof launchWriter> | null = null
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
-      // A client that navigated away mid-launch leaves nothing to write to, and
-      // the launch itself is deliberately allowed to finish regardless — the
-      // session it started is real whether or not anyone heard about it.
-      let open = true
-      const send = (event: AgentLaunchEvent) => {
-        if (!open) return
-        try {
-          controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`))
-        } catch {
-          open = false
-        }
+      const out = launchWriter(controller)
+      writer = out
+
+      // Numbering is the stream's job either way; only the buffering needs an
+      // entry, which is why an older client without a `launchId` still gets a
+      // `seq` — it simply has nothing to reattach to.
+      let localSeq = 0
+      const send = (body: AgentLaunchEventBody) => {
+        const event = entry
+          ? appendLaunchEvent(entry, body)
+          : ({ ...body, seq: ++localSeq } as AgentLaunchEvent)
+        out.write(event)
       }
 
       try {
@@ -615,37 +691,150 @@ function streamLaunch(plan: LaunchPlan): Response {
       } catch (error) {
         send({ event: 'failed', ...launchFailure(error) })
       } finally {
-        if (open) controller.close()
+        out.close()
       }
     },
     cancel() {
-      // Nothing to unwind: the spawn is fire-and-forget by design, and `send`
-      // notices the closed stream on its next write.
+      // Nothing to unwind: the spawn is fire-and-forget by design. Only the
+      // heartbeat has to go, or it ticks against a stream nobody holds.
+      writer?.abandon()
     },
   })
 
-  return new Response(stream, {
-    headers: { 'Content-Type': LAUNCH_STREAM_MIME, 'Cache-Control': 'no-store' },
+  return new Response(stream, { headers: launchStreamHeaders })
+}
+
+/**
+ * Replays what a launch has already said, then follows it live until it ends.
+ *
+ * This is the whole point of the registry: the terminal event is the only place
+ * a `sessionId` and a deep link ever appear, so a client that lost its POST
+ * stream comes back here with the highest `seq` it applied and picks up exactly
+ * where it stopped. A launch that has already finished replays and closes at
+ * once.
+ */
+function streamReattach(entry: LaunchEntry, since: number): Response {
+  let detach: (() => void) | null = null
+  let writer: ReturnType<typeof launchWriter> | null = null
+
+  const stream = new ReadableStream<Uint8Array>({
+    // Deliberately synchronous: nothing may be appended between the replay and
+    // the subscription, or the event that landed in the gap is lost.
+    start(controller) {
+      const out = launchWriter(controller)
+      writer = out
+
+      for (const event of eventsSince(entry, since)) out.write(event)
+
+      if (entry.done) {
+        out.close()
+        return
+      }
+
+      detach = subscribeToLaunch(entry, (event) => {
+        out.write(event)
+        if (isTerminalLaunchEvent(event)) {
+          detach?.()
+          detach = null
+          out.close()
+        }
+      })
+    },
+    cancel() {
+      detach?.()
+      detach = null
+      writer?.abandon()
+    },
   })
+
+  return new Response(stream, { headers: launchStreamHeaders })
+}
+
+/**
+ * The client's own id for this launch, if it minted one.
+ *
+ * Validated here rather than in `validateLaunchRequest` because the registry
+ * owns what an id may look like, and because this has to be read before the
+ * rest of the body is trusted at all.
+ */
+function readLaunchId(body: unknown): string | null {
+  if (!body || typeof body !== 'object') return null
+  const { launchId } = body as Partial<AgentLaunchRequest>
+  if (launchId === undefined || launchId === null) return null
+  if (typeof launchId !== 'string' || !isValidLaunchId(launchId)) {
+    throw new AgentLaunchError(400, 'launchId must be 1-128 characters of [A-Za-z0-9_-]')
+  }
+  return launchId
 }
 
 async function handleAgentLaunch(req: Request, options: ApiRoutesOptions): Promise<Response> {
-  const planned = await planLaunch(req, options)
-  if ('error' in planned) return planned.error
+  let body: unknown
+  try {
+    body = await req.json()
+  } catch {
+    return jsonResponse({ error: 'Invalid JSON body' }, { status: 400 })
+  }
+
+  let launchId: string | null
+  try {
+    launchId = readLaunchId(body)
+  } catch (error) {
+    return launchErrorResponse(error)
+  }
+
+  // Registered before the request is validated, so a client that drops and
+  // comes back a moment later always finds the id it minted — and so a retry of
+  // a launch already running reattaches instead of starting a second agent.
+  let entry: LaunchEntry | null = null
+  if (launchId) {
+    const registered = registerLaunch(launchId)
+    if (!registered.created) return streamReattach(registered.entry, 0)
+    entry = registered.entry
+  }
+
+  const planned = await planLaunch(body, options)
+  if ('failure' in planned) {
+    // The refusal goes in the status line as it always has, and into the entry
+    // as well: an id that was registered must never be left hanging with a
+    // reattach that would wait forever for a launch that never started.
+    if (entry) appendLaunchEvent(entry, { event: 'failed', ...planned.failure })
+    return jsonResponse({ error: planned.failure.error }, { status: planned.failure.status })
+  }
 
   if ((req.headers.get('accept') ?? '').includes(LAUNCH_STREAM_MIME)) {
-    return streamLaunch(planned.plan)
+    return streamLaunch(planned.plan, entry)
   }
 
   try {
     const { sessionId, url } = await spawnAgentThread(planned.plan)
-    return jsonResponse(launchResult(planned.plan, sessionId, url))
+    const result = launchResult(planned.plan, sessionId, url)
+    if (entry) appendLaunchEvent(entry, { event: 'launched', result })
+    return jsonResponse(result)
   } catch (error) {
-    return launchErrorResponse(error)
+    const failure = launchFailure(error)
+    if (entry) appendLaunchEvent(entry, { event: 'failed', ...failure })
+    return jsonResponse({ error: failure.error }, { status: failure.status })
   }
 }
 
-async function handleList(url: URL, options: ApiRoutesOptions): Promise<Response> {
+/**
+ * Reattach to a launch already in flight. A GET, not a re-POST, so there is no
+ * request body that could be mistaken for a second launch.
+ */
+function handleAgentLaunchEvents(url: URL): Response {
+  const id = url.searchParams.get('id') ?? ''
+  const entry = id && isValidLaunchId(id) ? getLaunch(id) : null
+  if (!entry) {
+    return jsonResponse({ error: 'Unknown launch' }, { status: 404 })
+  }
+
+  // A junk `since` replays everything, which is the safe direction: the client
+  // drops events it has already applied.
+  const since = Number.parseInt(url.searchParams.get('since') ?? '', 10)
+  return streamReattach(entry, Number.isFinite(since) && since > 0 ? since : 0)
+}
+
+async function handleList(req: Request, url: URL, options: ApiRoutesOptions): Promise<Response> {
   const requestPath = url.searchParams.get('path') || '/'
   // Allow client to override showHidden via query param (only to show, not to hide if server allows)
   const showHiddenParam = url.searchParams.get('hidden')
@@ -672,7 +861,7 @@ async function handleList(url: URL, options: ApiRoutesOptions): Promise<Response
       items,
     }
 
-    return jsonResponse(response)
+    return conditionalJsonResponse(req, response)
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code
     if (code === 'ENOENT') {
@@ -819,7 +1008,7 @@ async function handleFile(req: Request, url: URL, options: ApiRoutesOptions): Pr
   }
 }
 
-async function handleView(url: URL, options: ApiRoutesOptions): Promise<Response> {
+async function handleView(req: Request, url: URL, options: ApiRoutesOptions): Promise<Response> {
   const requestPath = url.searchParams.get('path')
   if (!requestPath) {
     return jsonResponse({ error: 'Path required' }, { status: 400 })
@@ -847,7 +1036,7 @@ async function handleView(url: URL, options: ApiRoutesOptions): Promise<Response
 
     if (viewableType === 'text') {
       const content = await fs.readFile(safePath.fullPath, 'utf-8')
-      return jsonResponse({
+      return conditionalJsonResponse(req, {
         type: 'text',
         filename,
         extension,
@@ -858,7 +1047,7 @@ async function handleView(url: URL, options: ApiRoutesOptions): Promise<Response
     }
 
     // For binary previews, return the URL to fetch the file directly (inline, not download).
-    return jsonResponse({
+    return conditionalJsonResponse(req, {
       type: viewableType,
       filename,
       extension,

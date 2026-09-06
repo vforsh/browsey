@@ -1,6 +1,20 @@
-export type AuthConfig = {
-  enabled: boolean
-  token: string | null
+/**
+ * Server-wide origin secret header. Exact case matters — it is the contract the
+ * mobile client sends and the CLI's own probes must reproduce.
+ *
+ * Distinct from `Authorization: Bearer <agent-token>`, which stays a narrower
+ * privilege on `/api/agents/*`. A protected server requires both there.
+ */
+export const ACCESS_TOKEN_HEADER = 'X-Browsey-Access-Token'
+
+/**
+ * One banner line, on or off, never the value — a token printed at startup ends
+ * up in launchd logs and terminal scrollback for the rest of its life.
+ */
+export function describeAccessProtection(accessToken: string | undefined): string {
+  return accessToken
+    ? `protected — ${ACCESS_TOKEN_HEADER} required on every /api/ request`
+    : 'off — anyone who can reach this port can use the API'
 }
 
 export function generateToken(): string {
@@ -29,6 +43,11 @@ export function extractToken(req: Request): string | null {
   return null
 }
 
+/**
+ * Constant-time equality. Length is compared first and short-circuits, which
+ * leaks the expected length — acceptable for fixed-width generated tokens and
+ * unavoidable without a fixed-size digest step.
+ */
 export function validateToken(provided: string | null, expected: string): boolean {
   if (!provided) return false
   if (provided.length !== expected.length) return false
@@ -38,24 +57,6 @@ export function validateToken(provided: string | null, expected: string): boolea
     result |= provided.charCodeAt(i) ^ expected.charCodeAt(i)
   }
   return result === 0
-}
-
-export function createAuthConfig(options: { auth?: boolean; token?: string }): AuthConfig {
-  if (!options.auth && !options.token) {
-    return { enabled: false, token: null }
-  }
-
-  const token = options.token || generateToken()
-  return { enabled: true, token }
-}
-
-export function isAuthenticated(req: Request, config: AuthConfig): boolean {
-  if (!config.enabled || !config.token) {
-    return true
-  }
-
-  const provided = extractToken(req)
-  return validateToken(provided, config.token)
 }
 
 export function unauthorizedResponse(): Response {
