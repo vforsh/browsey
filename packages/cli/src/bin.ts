@@ -674,6 +674,17 @@ program
       : undefined
     const cf = resolveCloudflareCredentials(options)
 
+    // The phone checks the origin token on every request; the Cloudflare pair
+    // only gets it past an edge. A payload with the second and not the first
+    // describes a server it can reach but not talk to, and the client refuses
+    // to store it — so refuse to print it.
+    if (cf && !access) {
+      console.error('Error: Cloudflare credentials need an access token alongside them.')
+      console.error('The origin checks X-Browsey-Access-Token on every request; Cloudflare')
+      console.error('only gets the request that far. Pass --access-token as well.')
+      process.exit(1)
+    }
+
     if ((access || cf) && parsedUrl.protocol !== 'https:') {
       console.error(`Error: Refusing to put remote credentials in a payload for ${url}`)
       console.error('Access tokens and Cloudflare credentials require an https: URL.')
