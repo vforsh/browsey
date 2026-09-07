@@ -612,6 +612,21 @@ const launchStreamHeaders = {
 }
 
 /**
+ * Echoes the id a registered launch can be reattached by.
+ *
+ * A `seq` on the wire already proves the server speaks this protocol, but only
+ * once an event has arrived — and the drop worth chasing hardest is the one
+ * that happens before the first byte, where the client has a launch it cannot
+ * name and the agent is already spawning. The header lands with the response
+ * headers, so it is there even when the body never is.
+ */
+function launchHeaders(entry: LaunchEntry | null): Record<string, string> {
+  return entry
+    ? { ...launchStreamHeaders, 'X-Browsey-Launch-Id': entry.id }
+    : launchStreamHeaders
+}
+
+/**
  * A writer onto a launch stream that has stopped caring whether anyone is
  * listening: a client that navigated away (or a tunnel that dropped) leaves
  * nothing to write to, and the launch itself is deliberately allowed to finish
@@ -701,7 +716,7 @@ function streamLaunch(plan: LaunchPlan, entry: LaunchEntry | null): Response {
     },
   })
 
-  return new Response(stream, { headers: launchStreamHeaders })
+  return new Response(stream, { headers: launchHeaders(entry) })
 }
 
 /**
