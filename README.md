@@ -106,6 +106,7 @@ Browsey exposes a simple REST API:
 | `GET /api/file?path=/file.txt` | Download a file |
 | `GET /api/view?path=/file.txt` | View text, images, and supported videos |
 | `GET /api/stat?path=/file.txt` | Get file metadata |
+| `GET /api/search?path=/&q=name` | Filename search; optional `hidden=1`, `limit`, `progressive=1` |
 | `POST /api/save` | Save an existing text file; requires read-write mode and `baseModified`/`baseSize` conflict guards |
 | `GET /api/git/changes?path=/` | Git file changes |
 | `GET /api/git/commit?path=/&hash=<sha>` | Git commit details, stats, navigation, and changed files (`includeAdjacent=0` skips navigation lookup) |
@@ -119,6 +120,16 @@ Browsey exposes a simple REST API:
 
 When the server runs with an [access token](#access-token), *every* row above additionally
 requires an `X-Browsey-Access-Token` header — health included.
+
+Search ranks exact names, then prefixes, substrings, and fuzzy matches. A completed response adds
+`status: "complete"`, `hasMore`, and `nextCursor` to the existing `query` and `results` fields.
+Pass the returned `jobId` and `cursor=<nextCursor>` to fetch more results. For a large tree,
+`progressive=1` returns `status: "searching"` immediately; poll with `jobId` for early filename
+matches and the completed ranking. Early matches are provisional until the status is complete.
+`DELETE /api/search?jobId=<id>` cancels a superseded search. Existing clients that omit
+`progressive=1` wait for the complete first page. Hidden files remain excluded unless the server
+was started with `--hidden` or the request sets `hidden=1`; configured ignore patterns always apply.
+Directory symlinks are returned as matches but are not traversed.
 
 ### Server identity
 

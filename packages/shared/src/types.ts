@@ -211,6 +211,14 @@ export type SearchResult =
 export type SearchResponse = {
   query: string
   results: SearchResult[]
+  /** Present on current servers. Omitted by older servers. */
+  status?: 'searching' | 'complete'
+  hasMore?: boolean
+  nextCursor?: string | null
+  jobId?: string
+  /** Number of unreadable/disappearing directories omitted from this search. */
+  skippedDirectories?: number
+  hidden?: boolean
 }
 
 export type HealthHostInfo = {

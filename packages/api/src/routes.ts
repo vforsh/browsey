@@ -15,6 +15,7 @@ import type { IgnoreMatcher } from '@vforsh/browsey-shared'
 import { findGitRoot, getGitStatus, getGitLog, getGitCommit, getGitChanges, revertGitFile, GitOperationError } from './git.js'
 import { entryExtension, readDirectoryItems, readSymlinkTarget, toServedPath } from './directory-listing.js'
 import { conditionalJsonResponse } from './conditional.js'
+import { handleSearch } from './search.js'
 import {
   AgentLaunchError,
   buildThreadPrompt,
@@ -39,7 +40,7 @@ import {
 import type { LaunchEntry } from './launch-registry.js'
 import { listAgentSkills, skillLookupDir } from './agent-skills.js'
 import { stopClaudeSession } from './claude-remote-control.js'
-import type { ApiRoutesOptions, FileItem, ListResponse, SyncManifestDirectory, SyncManifestResponse, SearchResult, SearchResponse, GitStatusResponse, GitLogResponse, GitCommitResponse, GitCommitFile, GitChangesResponse, GitRevertResponse, HealthResponse, ViewResponse, SaveTextResponse, AgentLaunchEvent, AgentLaunchEventBody, AgentLaunchFailureReason, AgentLaunchRequest, AgentLaunchResponse, AgentLaunchStreamLine, AgentStopRequest, AgentStopResponse, AgentTrustRequest, AgentTrustResponse } from '@vforsh/browsey-shared'
+import type { ApiRoutesOptions, FileItem, ListResponse, SyncManifestDirectory, SyncManifestResponse, GitStatusResponse, GitLogResponse, GitCommitResponse, GitCommitFile, GitChangesResponse, GitRevertResponse, HealthResponse, ViewResponse, SaveTextResponse, AgentLaunchEvent, AgentLaunchEventBody, AgentLaunchFailureReason, AgentLaunchRequest, AgentLaunchResponse, AgentLaunchStreamLine, AgentStopRequest, AgentStopResponse, AgentTrustRequest, AgentTrustResponse } from '@vforsh/browsey-shared'
 
 const JSON_HEADERS = {
   'Content-Type': 'application/json',
@@ -247,7 +248,7 @@ export async function handleApiRequest(
     return handleStat(url, options)
   }
   if (route === '/search') {
-    return handleSearch(url, options)
+    return handleSearch(req, url, options)
   }
   if (route === '/git') {
     return handleGit(url, options)
@@ -1190,183 +1191,6 @@ async function handleStat(url: URL, options: ApiRoutesOptions): Promise<Response
     }
     if (code === 'EACCES') {
       return jsonResponse({ error: 'Permission denied' }, { status: 403 })
-    }
-    return jsonResponse({ error: 'Internal server error' }, { status: 500 })
-  }
-}
-
-/**
- * Fuzzy matching algorithm (fzf-style)
- * Returns score > 0 if matches, 0 if no match
- * Higher score = better match
- */
-function fuzzyScore(text: string, pattern: string): number {
-  if (pattern.length === 0) return 0
-  if (text.length === 0) return 0
-
-  const lowerText = text.toLowerCase()
-  const lowerPattern = pattern.toLowerCase()
-
-  // Quick check: text must contain all pattern characters in order
-  let patternIdx = 0
-  for (let i = 0; i < lowerText.length && patternIdx < lowerPattern.length; i++) {
-    if (lowerText[i] === lowerPattern[patternIdx]) {
-      patternIdx++
-    }
-  }
-  if (patternIdx !== lowerPattern.length) return 0
-
-  // Exact substring match gets highest score
-  if (lowerText.includes(lowerPattern)) {
-    return 100 + lowerPattern.length * 2
-  }
-
-  // Calculate fuzzy score
-  let score = 0
-  let patternIndex = 0
-  let prevMatchIndex = -2
-  let consecutiveBonus = 0
-
-  for (let i = 0; i < lowerText.length && patternIndex < lowerPattern.length; i++) {
-    if (lowerText[i] === lowerPattern[patternIndex]) {
-      score += 1
-
-      // Consecutive match bonus
-      if (i === prevMatchIndex + 1) {
-        consecutiveBonus += 2
-        score += consecutiveBonus
-      } else {
-        consecutiveBonus = 0
-      }
-
-      // Start of word bonus
-      if (i === 0 || /[\s\-_./]/.test(lowerText[i - 1]!)) {
-        score += 3
-      }
-
-      prevMatchIndex = i
-      patternIndex++
-    }
-  }
-
-  return score
-}
-
-async function searchRecursive(
-  servedRoot: string,
-  searchRootPath: string,
-  currentPath: string,
-  query: string,
-  showHidden: boolean,
-  ignore: IgnoreMatcher,
-  limit: number,
-  results: SearchResult[] = [],
-  depth: number = 0
-): Promise<SearchResult[]> {
-  // Limit recursion depth for performance
-  if (depth > 20 || results.length >= limit * 2) {
-    return results
-  }
-
-  try {
-    const entries = await fs.readdir(currentPath, { withFileTypes: true })
-
-    for (const entry of entries) {
-      if (!showHidden && entry.name.startsWith('.')) continue
-      if (ignore(entry.name)) continue
-
-      const entryPath = join(currentPath, entry.name)
-      const relativePath = relative(searchRootPath, entryPath)
-
-      // Score the file name against the query
-      const score = fuzzyScore(entry.name, query)
-      const isSymlink = entry.isSymbolicLink()
-      const target = isSymlink ? await readSymlinkTarget(servedRoot, entryPath) : null
-
-      if (score > 0) {
-        const resultPath = '/' + relativePath.replace(/\\/g, '/')
-        if (target) {
-          results.push({
-            name: entry.name,
-            path: resultPath,
-            absolutePath: entryPath,
-            type: 'symlink',
-            score,
-            extension: entryExtension(entry.name, target.targetType, false),
-            ...target,
-          })
-        } else if (entry.isDirectory()) {
-          results.push({
-            name: entry.name,
-            path: resultPath,
-            absolutePath: entryPath,
-            type: 'directory',
-            score,
-            extension: null,
-          })
-        } else {
-          results.push({
-            name: entry.name,
-            path: resultPath,
-            absolutePath: entryPath,
-            type: 'file',
-            score,
-            extension: getFileExtension(entry.name),
-          })
-        }
-      }
-
-      // Recurse into directories
-      if (entry.isDirectory() || target?.targetType === 'directory') {
-        await searchRecursive(servedRoot, searchRootPath, entryPath, query, showHidden, ignore, limit, results, depth + 1)
-      }
-    }
-  } catch {
-    // Skip directories we can't read
-  }
-
-  return results
-}
-
-async function handleSearch(url: URL, options: ApiRoutesOptions): Promise<Response> {
-  const requestPath = url.searchParams.get('path') || '/'
-  const query = url.searchParams.get('q') || ''
-  const limit = Math.min(parseInt(url.searchParams.get('limit') || '50', 10), 200)
-
-  if (!query || query.length < 1) {
-    return jsonResponse({ query: '', results: [] } satisfies SearchResponse)
-  }
-
-  const safePath = resolveSafePath(options.root, requestPath)
-  if (!safePath) {
-    return jsonResponse({ error: 'Access denied: Invalid path' }, { status: 403 })
-  }
-
-  try {
-    const ignore = createIgnoreMatcher(options.ignorePatterns)
-    const results = await searchRecursive(
-      options.root,
-      safePath.fullPath,
-      safePath.fullPath,
-      query,
-      options.showHidden,
-      ignore,
-      limit
-    )
-
-    // Sort by fuzzy score (higher is better)
-    results.sort((a, b) => b.score - a.score)
-
-    const response: SearchResponse = {
-      query,
-      results: results.slice(0, limit),
-    }
-
-    return jsonResponse(response)
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code
-    if (code === 'ENOENT') {
-      return jsonResponse({ error: 'Directory not found' }, { status: 404 })
     }
     return jsonResponse({ error: 'Internal server error' }, { status: 500 })
   }
