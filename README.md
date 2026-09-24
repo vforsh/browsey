@@ -106,7 +106,7 @@ Browsey exposes a simple REST API:
 | `GET /api/file?path=/file.txt` | Download a file |
 | `GET /api/view?path=/file.txt` | View text, images, and supported videos |
 | `GET /api/stat?path=/file.txt` | Get file metadata |
-| `GET /api/search?path=/&q=name` | Filename search; optional `hidden=1`, `limit`, `progressive=1` |
+| `GET /api/search?path=/&q=term` | Filename search by default, or text search with `mode=content`; optional `hidden=1`, `limit`, `progressive=1` |
 | `POST /api/save` | Save an existing text file; requires read-write mode and `baseModified`/`baseSize` conflict guards |
 | `GET /api/git/changes?path=/` | Git file changes |
 | `GET /api/git/commit?path=/&hash=<sha>` | Git commit details, stats, navigation, and changed files (`includeAdjacent=0` skips navigation lookup) |
@@ -130,6 +130,14 @@ matches and the completed ranking. Early matches are provisional until the statu
 `progressive=1` wait for the complete first page. Hidden files remain excluded unless the server
 was started with `--hidden` or the request sets `hidden=1`; configured ignore patterns always apply.
 Directory symlinks are returned as matches but are not traversed.
+
+Set `mode=content` for a case-insensitive literal search inside regular UTF-8 files. Each matching
+file appears once with its first match's `contentMatch: { line, snippet }`; directories and symlinks
+are not content results. Files larger than 1 MiB, binary or invalid UTF-8 files, and unreadable files
+are skipped; responses report `skippedLargeFiles`, `skippedBinaryFiles`, and `skippedUnreadableFiles`.
+Content jobs use the same progressive polling, stable completed pagination, scope, hidden, ignore,
+and cancellation behavior as filename jobs. The `mode` response field lets new clients detect an
+older server; omitting `mode` retains the original filename behavior.
 
 ### Server identity
 

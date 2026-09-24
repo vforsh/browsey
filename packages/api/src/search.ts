@@ -1,17 +1,24 @@
 import { randomUUID } from 'crypto'
+import { constants } from 'fs'
 import { promises as fs } from 'fs'
 import { basename, join, relative, sep } from 'path'
 import { getFileExtension, resolveSafePath, createIgnoreMatcher } from '@vforsh/browsey-shared'
 import type { ApiRoutesOptions, IgnoreMatcher, SearchResponse, SearchResult } from '@vforsh/browsey-shared'
 import { entryExtension, readSymlinkTarget } from './directory-listing.js'
 
-type Candidate = { name: string; fullPath: string; path: string; type: 'file' | 'directory' | 'symlink'; score: number }
+type SearchMode = 'name' | 'content'
+type Candidate = {
+  name: string; fullPath: string; path: string; type: 'file' | 'directory' | 'symlink'; score: number
+  contentMatch?: { line: number; snippet: string }
+}
 type Job = {
   id: string
   root: string
+  realRoot: string
   searchRoot: string
   query: string
   queryLower: string
+  mode: SearchMode
   hidden: boolean
   ignore: IgnoreMatcher
   candidates: Map<string, Candidate>
@@ -20,12 +27,17 @@ type Job = {
   done: Promise<void>
   error: string | null
   skippedDirectories: number
+  skippedLargeFiles: number
+  skippedBinaryFiles: number
+  skippedUnreadableFiles: number
   touched: number
 }
 
 const jobs = new Map<string, Job>()
 const JOB_TTL_MS = 5 * 60_000
 const SCAN_CONCURRENCY = 16
+const CONTENT_CONCURRENCY = 4
+const MAX_CONTENT_BYTES = 1024 * 1024
 
 function expireJob(job: Job): void {
   const remaining = JOB_TTL_MS - (Date.now() - job.touched)
@@ -84,7 +96,7 @@ function addCandidate(job: Job, fullPath: string, type: Candidate['type']): void
 
 /** Spotlight supplies early matches on macOS. The filesystem walk remains authoritative. */
 async function spotlight(job: Job): Promise<void> {
-  if (process.platform !== 'darwin' || job.query.length < 3) return
+  if (job.mode !== 'name' || process.platform !== 'darwin' || job.query.length < 3) return
   const escaped = job.query.replace(/[\\"*]/g, '\\$&')
   try {
     const child = Bun.spawn(['/usr/bin/mdfind', '-onlyin', job.searchRoot, `kMDItemFSName == "*${escaped}*"cd`], {
@@ -113,11 +125,75 @@ async function spotlight(job: Job): Promise<void> {
   }
 }
 
+/** Content search reads bounded, regular UTF-8 files only. A symlink is never followed. */
+async function searchContentFile(job: Job, fullPath: string): Promise<void> {
+  if (job.controller.signal.aborted) return
+  try {
+    const realPath = await fs.realpath(fullPath)
+    const rel = relative(job.realRoot, realPath)
+    if (rel === '..' || rel.startsWith(`..${sep}`) || rel.startsWith(sep)) return
+    const file = await fs.open(fullPath, constants.O_RDONLY | constants.O_NOFOLLOW)
+    try {
+      const stat = await file.stat()
+      if (!stat.isFile()) return
+      if (stat.size > MAX_CONTENT_BYTES) {
+        job.skippedLargeFiles++
+        return
+      }
+      // One extra byte detects a file that grew during the scan without
+      // allocating a full MiB for every small file.
+      const bytes = Buffer.alloc(stat.size + 1)
+      let bytesRead = 0
+      while (bytesRead < bytes.length && !job.controller.signal.aborted) {
+        const part = await file.read(bytes, bytesRead, bytes.length - bytesRead, bytesRead)
+        if (part.bytesRead === 0) break
+        bytesRead += part.bytesRead
+      }
+      if (job.controller.signal.aborted) return
+      if (bytesRead > MAX_CONTENT_BYTES) {
+        job.skippedLargeFiles++
+        return
+      }
+      if (bytesRead > stat.size) {
+        job.skippedUnreadableFiles++
+        return
+      }
+      const content = new TextDecoder('utf-8', { fatal: true }).decode(bytes.subarray(0, bytesRead))
+      if (/[\x00-\x08\x0b\x0c\x0e-\x1f]/.test(content)) {
+        job.skippedBinaryFiles++
+        return
+      }
+      const index = content.toLowerCase().indexOf(job.queryLower)
+      if (index < 0 || job.controller.signal.aborted) return
+      const start = content.lastIndexOf('\n', index - 1) + 1
+      const end = content.indexOf('\n', index)
+      const lineEnd = end < 0 ? content.length : end
+      const line = content.slice(start, lineEnd).replace(/\r$/, '').replace(/\t/g, ' ')
+      const matchColumn = index - start
+      const snippetStart = Math.max(0, matchColumn - 60)
+      const snippetLength = Math.max(180, job.query.length + 80)
+      const snippet = `${snippetStart ? '…' : ''}${line.slice(snippetStart, snippetStart + snippetLength).trimEnd()}${snippetStart + snippetLength < line.length ? '…' : ''}`
+      const lineNumber = content.slice(0, index).split('\n').length
+      const path = '/' + relative(job.searchRoot, fullPath).split(sep).join('/')
+      job.candidates.set(path, {
+        name: basename(fullPath), fullPath, path, type: 'file', score: 0,
+        contentMatch: { line: lineNumber, snippet },
+      })
+    } finally {
+      await file.close()
+    }
+  } catch (error) {
+    if (error instanceof TypeError) job.skippedBinaryFiles++ // Invalid UTF-8.
+    else job.skippedUnreadableFiles++
+  }
+}
+
 async function scan(job: Job): Promise<void> {
   const queue = [job.searchRoot]
   let nextDirectory = 0
   const active = new Set<Promise<void>>()
-  while ((nextDirectory < queue.length || active.size) && !job.controller.signal.aborted) {
+  const activeFiles = new Set<Promise<void>>()
+  while ((nextDirectory < queue.length || active.size || activeFiles.size) && !job.controller.signal.aborted) {
     while (nextDirectory < queue.length && active.size < SCAN_CONCURRENCY && !job.controller.signal.aborted) {
       const dir = queue[nextDirectory++]!
       const work = (async () => {
@@ -127,11 +203,20 @@ async function scan(job: Job): Promise<void> {
             if (job.controller.signal.aborted) return
             if ((!job.hidden && entry.name.startsWith('.')) || job.ignore(entry.name)) continue
             const isDirectory = entry.isDirectory()
-            const matches = scoreName(entry.name, job.queryLower) > 0
-            if (!isDirectory && !matches) continue
+            const matches = job.mode === 'name' && scoreName(entry.name, job.queryLower) > 0
+            if (!isDirectory && !matches && (job.mode !== 'content' || !entry.isFile())) continue
             const fullPath = join(dir, entry.name)
             if (matches) {
               addCandidate(job, fullPath, candidateType(entry))
+            }
+            if (job.mode === 'content' && entry.isFile()) {
+              while (activeFiles.size >= CONTENT_CONCURRENCY && !job.controller.signal.aborted) {
+                await Promise.race(activeFiles)
+              }
+              if (job.controller.signal.aborted) return
+              const fileWork = searchContentFile(job, fullPath)
+              activeFiles.add(fileWork)
+              void fileWork.finally(() => activeFiles.delete(fileWork))
             }
             // Directory symlinks are search results, never traversal edges.
             // This avoids loops and leaving the served tree.
@@ -144,16 +229,16 @@ async function scan(job: Job): Promise<void> {
       active.add(work)
       void work.finally(() => active.delete(work))
     }
-    if (active.size) await Promise.race(active)
+    if (active.size || activeFiles.size) await Promise.race([...active, ...activeFiles])
   }
 }
 
-function createJob(root: string, searchRoot: string, query: string, hidden: boolean, ignorePatterns: string[]): Job {
+function createJob(root: string, realRoot: string, searchRoot: string, query: string, mode: SearchMode, hidden: boolean, ignorePatterns: string[]): Job {
   const job: Job = {
-    id: randomUUID(), root, searchRoot, query, queryLower: query.toLowerCase(), hidden,
+    id: randomUUID(), root, realRoot, searchRoot, query, queryLower: query.toLowerCase(), mode, hidden,
     ignore: createIgnoreMatcher(ignorePatterns), candidates: new Map(), results: null,
     controller: new AbortController(), done: Promise.resolve(), error: null, touched: Date.now(),
-    skippedDirectories: 0,
+    skippedDirectories: 0, skippedLargeFiles: 0, skippedBinaryFiles: 0, skippedUnreadableFiles: 0,
   }
   jobs.set(job.id, job)
   setTimeout(() => expireJob(job), JOB_TTL_MS).unref()
@@ -169,7 +254,8 @@ function createJob(root: string, searchRoot: string, query: string, hidden: bool
 async function materialize(job: Job, candidate: Candidate): Promise<SearchResult> {
   const base = { name: candidate.name, path: candidate.path, absolutePath: candidate.fullPath, score: candidate.score }
   if (candidate.type === 'directory') return { ...base, type: 'directory', extension: null }
-  if (candidate.type === 'file') return { ...base, type: 'file', extension: getFileExtension(candidate.name) }
+  if (candidate.type === 'file') return { ...base, type: 'file', extension: getFileExtension(candidate.name),
+    ...(candidate.contentMatch ? { contentMatch: candidate.contentMatch } : {}) }
   try {
     const target = await readSymlinkTarget(job.root, candidate.fullPath)
     return { ...base, type: 'symlink', extension: entryExtension(candidate.name, target.targetType, false), ...target }
@@ -187,10 +273,13 @@ async function responseFor(job: Job, limit: number, cursor: number): Promise<Res
   const results = await Promise.all(page.map((candidate) => materialize(job, candidate)))
   const hasMore = complete && cursor + limit < ranked.length
   const response: SearchResponse = {
-    query: job.query, results, status: complete ? 'complete' : 'searching', hasMore,
+    query: job.query, mode: job.mode, results, status: complete ? 'complete' : 'searching', hasMore,
     nextCursor: hasMore ? String(cursor + limit) : null,
     jobId: job.id,
     skippedDirectories: job.skippedDirectories,
+    skippedLargeFiles: job.skippedLargeFiles,
+    skippedBinaryFiles: job.skippedBinaryFiles,
+    skippedUnreadableFiles: job.skippedUnreadableFiles,
     hidden: job.hidden,
   }
   return Response.json(response)
@@ -215,7 +304,10 @@ export async function handleSearch(req: Request, url: URL, options: ApiRoutesOpt
     return responseFor(job, limit, cursor)
   }
 
+  const mode = url.searchParams.get('mode') || 'name'
+  if (mode !== 'name' && mode !== 'content') return Response.json({ error: 'Invalid search mode' }, { status: 400 })
   const query = (url.searchParams.get('q') || '').trim()
+  if (mode === 'content' && query.length > 512) return Response.json({ error: 'Content query is too long' }, { status: 400 })
   if (!query) return Response.json({ query: '', results: [], status: 'complete', hasMore: false, nextCursor: null } satisfies SearchResponse)
   const requestPath = url.searchParams.get('path') || '/'
   const safePath = resolveSafePath(options.root, requestPath)
@@ -230,7 +322,7 @@ export async function handleSearch(req: Request, url: URL, options: ApiRoutesOpt
   }
   const hidden = options.showHidden || url.searchParams.get('hidden') === '1'
   const limit = searchLimit(url)
-  const job = createJob(options.root, safePath.fullPath, query, hidden, options.ignorePatterns)
+  const job = createJob(options.root, realRoot, safePath.fullPath, query, mode, hidden, options.ignorePatterns)
   if (url.searchParams.get('progressive') !== '1') {
     req.signal.addEventListener('abort', () => job.controller.abort(), { once: true })
   }

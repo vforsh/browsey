@@ -193,6 +193,8 @@ export type SearchResult =
   | (SearchResultBase & {
       type: 'file'
       extension: string | null
+      /** First literal content match; present only for content searches. */
+      contentMatch?: { line: number; snippet: string }
     })
   | (SearchResultBase & {
       type: 'directory'
@@ -211,6 +213,8 @@ export type SearchResult =
 export type SearchResponse = {
   query: string
   results: SearchResult[]
+  /** Omitted by older servers; requests without mode still search names. */
+  mode?: 'name' | 'content'
   /** Present on current servers. Omitted by older servers. */
   status?: 'searching' | 'complete'
   hasMore?: boolean
@@ -218,6 +222,9 @@ export type SearchResponse = {
   jobId?: string
   /** Number of unreadable/disappearing directories omitted from this search. */
   skippedDirectories?: number
+  skippedLargeFiles?: number
+  skippedBinaryFiles?: number
+  skippedUnreadableFiles?: number
   hidden?: boolean
 }
 

@@ -129,7 +129,7 @@ browsey pair [target]                 # --url <url>, --name <name>
 | `GET /api/file?path=/file.txt` | Download file |
 | `GET /api/view?path=/file.txt` | View file in browser |
 | `GET /api/stat?path=/file.txt` | Get file metadata |
-| `GET /api/search?path=/&q=term` | Filename search with exact/prefix/fuzzy ranking, pagination, optional progressive results and `hidden=1` |
+| `GET /api/search?path=/&q=term` | Filename search by default; `mode=content` finds literal text in UTF-8 files up to 1 MiB, with line/snippet. Both modes support pagination, progressive results and `hidden=1` |
 | `POST /api/save` | Save an existing text file; requires read-write mode and `baseModified`/`baseSize` conflict guards |
 | `GET /api/git?path=/` | Git repository status |
 | `GET /api/git/log?path=/` | Git commit history |
