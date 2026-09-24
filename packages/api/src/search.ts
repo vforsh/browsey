@@ -3,13 +3,13 @@ import { constants } from 'fs'
 import { promises as fs } from 'fs'
 import { basename, join, relative, sep } from 'path'
 import { getFileExtension, resolveSafePath, createIgnoreMatcher } from '@vforsh/browsey-shared'
-import type { ApiRoutesOptions, IgnoreMatcher, SearchResponse, SearchResult } from '@vforsh/browsey-shared'
+import type { ApiRoutesOptions, IgnoreMatcher, SearchMode, SearchResponse, SearchResult } from '@vforsh/browsey-shared'
 import { entryExtension, readSymlinkTarget } from './directory-listing.js'
 
-type SearchMode = 'name' | 'content'
+type ContentMatch = { line: number; snippet: string }
 type Candidate = {
   name: string; fullPath: string; path: string; type: 'file' | 'directory' | 'symlink'; score: number
-  contentMatch?: { line: number; snippet: string }
+  contentMatch?: ContentMatch
 }
 type Job = {
   id: string
@@ -79,9 +79,13 @@ function candidateType(entry: { isSymbolicLink(): boolean; isDirectory(): boolea
   return 'file'
 }
 
+function isOutsideRoot(relativePath: string): boolean {
+  return relativePath === '..' || relativePath.startsWith(`..${sep}`) || relativePath.startsWith(sep)
+}
+
 function allowedPath(job: Job, fullPath: string): boolean {
   const rel = relative(job.searchRoot, fullPath)
-  if (rel === '' || rel === '..' || rel.startsWith(`..${sep}`) || rel.startsWith(sep)) return false
+  if (rel === '' || isOutsideRoot(rel)) return false
   return rel.split(sep).every((part) => (job.hidden || !part.startsWith('.')) && !job.ignore(part))
 }
 
@@ -113,7 +117,7 @@ async function spotlight(job: Job): Promise<void> {
     for (const found of output.split('\n')) {
       if (!found) continue
       const rel = relative(realRoot, found)
-      if (rel === '..' || rel.startsWith(`..${sep}`) || rel.startsWith(sep)) continue
+      if (isOutsideRoot(rel)) continue
       const servedPath = join(job.searchRoot, rel)
       if (!allowedPath(job, servedPath)) continue
       const stat = await fs.lstat(servedPath).catch(() => null)
@@ -125,63 +129,75 @@ async function spotlight(job: Job): Promise<void> {
   }
 }
 
-/** Content search reads bounded, regular UTF-8 files only. A symlink is never followed. */
+/** Read one regular UTF-8 file within the search budget, without following its final symlink. */
+async function readSearchableText(job: Job, fullPath: string): Promise<string | null> {
+  const file = await fs.open(fullPath, constants.O_RDONLY | constants.O_NOFOLLOW)
+  try {
+    const stat = await file.stat()
+    if (!stat.isFile()) return null
+    if (stat.size > MAX_CONTENT_BYTES) {
+      job.skippedLargeFiles++
+      return null
+    }
+    // One extra byte detects a file that grew during the scan without
+    // allocating a full MiB for every small file.
+    const bytes = Buffer.alloc(stat.size + 1)
+    let bytesRead = 0
+    while (bytesRead < bytes.length && !job.controller.signal.aborted) {
+      const part = await file.read(bytes, bytesRead, bytes.length - bytesRead, bytesRead)
+      if (part.bytesRead === 0) break
+      bytesRead += part.bytesRead
+    }
+    if (job.controller.signal.aborted) return null
+    if (bytesRead > MAX_CONTENT_BYTES) {
+      job.skippedLargeFiles++
+      return null
+    }
+    if (bytesRead > stat.size) {
+      job.skippedUnreadableFiles++
+      return null
+    }
+    const content = new TextDecoder('utf-8', { fatal: true }).decode(bytes.subarray(0, bytesRead))
+    if (/[\x00-\x08\x0b\x0c\x0e-\x1f]/.test(content)) {
+      job.skippedBinaryFiles++
+      return null
+    }
+    return content
+  } finally {
+    await file.close()
+  }
+}
+
+function firstContentMatch(content: string, query: string, queryLower: string): ContentMatch | null {
+  const index = content.toLowerCase().indexOf(queryLower)
+  if (index < 0) return null
+  const start = content.lastIndexOf('\n', index - 1) + 1
+  const end = content.indexOf('\n', index)
+  const lineEnd = end < 0 ? content.length : end
+  const line = content.slice(start, lineEnd).replace(/\r$/, '').replace(/\t/g, ' ')
+  const matchColumn = index - start
+  const snippetStart = Math.max(0, matchColumn - 60)
+  const snippetLength = Math.max(180, query.length + 80)
+  const excerpt = line.slice(snippetStart, snippetStart + snippetLength).trimEnd()
+  const before = snippetStart ? '…' : ''
+  const after = snippetStart + snippetLength < line.length ? '…' : ''
+  const lineNumber = content.slice(0, index).split('\n').length
+  return { line: lineNumber, snippet: `${before}${excerpt}${after}` }
+}
+
 async function searchContentFile(job: Job, fullPath: string): Promise<void> {
   if (job.controller.signal.aborted) return
   try {
     const realPath = await fs.realpath(fullPath)
-    const rel = relative(job.realRoot, realPath)
-    if (rel === '..' || rel.startsWith(`..${sep}`) || rel.startsWith(sep)) return
-    const file = await fs.open(fullPath, constants.O_RDONLY | constants.O_NOFOLLOW)
-    try {
-      const stat = await file.stat()
-      if (!stat.isFile()) return
-      if (stat.size > MAX_CONTENT_BYTES) {
-        job.skippedLargeFiles++
-        return
-      }
-      // One extra byte detects a file that grew during the scan without
-      // allocating a full MiB for every small file.
-      const bytes = Buffer.alloc(stat.size + 1)
-      let bytesRead = 0
-      while (bytesRead < bytes.length && !job.controller.signal.aborted) {
-        const part = await file.read(bytes, bytesRead, bytes.length - bytesRead, bytesRead)
-        if (part.bytesRead === 0) break
-        bytesRead += part.bytesRead
-      }
-      if (job.controller.signal.aborted) return
-      if (bytesRead > MAX_CONTENT_BYTES) {
-        job.skippedLargeFiles++
-        return
-      }
-      if (bytesRead > stat.size) {
-        job.skippedUnreadableFiles++
-        return
-      }
-      const content = new TextDecoder('utf-8', { fatal: true }).decode(bytes.subarray(0, bytesRead))
-      if (/[\x00-\x08\x0b\x0c\x0e-\x1f]/.test(content)) {
-        job.skippedBinaryFiles++
-        return
-      }
-      const index = content.toLowerCase().indexOf(job.queryLower)
-      if (index < 0 || job.controller.signal.aborted) return
-      const start = content.lastIndexOf('\n', index - 1) + 1
-      const end = content.indexOf('\n', index)
-      const lineEnd = end < 0 ? content.length : end
-      const line = content.slice(start, lineEnd).replace(/\r$/, '').replace(/\t/g, ' ')
-      const matchColumn = index - start
-      const snippetStart = Math.max(0, matchColumn - 60)
-      const snippetLength = Math.max(180, job.query.length + 80)
-      const snippet = `${snippetStart ? '…' : ''}${line.slice(snippetStart, snippetStart + snippetLength).trimEnd()}${snippetStart + snippetLength < line.length ? '…' : ''}`
-      const lineNumber = content.slice(0, index).split('\n').length
-      const path = '/' + relative(job.searchRoot, fullPath).split(sep).join('/')
-      job.candidates.set(path, {
-        name: basename(fullPath), fullPath, path, type: 'file', score: 0,
-        contentMatch: { line: lineNumber, snippet },
-      })
-    } finally {
-      await file.close()
-    }
+    if (isOutsideRoot(relative(job.realRoot, realPath))) return
+    const content = await readSearchableText(job, fullPath)
+    if (content === null || job.controller.signal.aborted) return
+    const contentMatch = firstContentMatch(content, job.query, job.queryLower)
+    if (!contentMatch) return
+    const path = '/' + relative(job.searchRoot, fullPath).split(sep).join('/')
+    job.candidates.set(path, {
+      name: basename(fullPath), fullPath, path, type: 'file', score: 0, contentMatch,
+    })
   } catch (error) {
     if (error instanceof TypeError) job.skippedBinaryFiles++ // Invalid UTF-8.
     else job.skippedUnreadableFiles++
@@ -203,13 +219,14 @@ async function scan(job: Job): Promise<void> {
             if (job.controller.signal.aborted) return
             if ((!job.hidden && entry.name.startsWith('.')) || job.ignore(entry.name)) continue
             const isDirectory = entry.isDirectory()
-            const matches = job.mode === 'name' && scoreName(entry.name, job.queryLower) > 0
-            if (!isDirectory && !matches && (job.mode !== 'content' || !entry.isFile())) continue
+            const nameMatches = job.mode === 'name' && scoreName(entry.name, job.queryLower) > 0
+            const isContentFile = job.mode === 'content' && entry.isFile()
+            if (!isDirectory && !nameMatches && !isContentFile) continue
             const fullPath = join(dir, entry.name)
-            if (matches) {
+            if (nameMatches) {
               addCandidate(job, fullPath, candidateType(entry))
             }
-            if (job.mode === 'content' && entry.isFile()) {
+            if (isContentFile) {
               while (activeFiles.size >= CONTENT_CONCURRENCY && !job.controller.signal.aborted) {
                 await Promise.race(activeFiles)
               }
@@ -317,7 +334,7 @@ export async function handleSearch(req: Request, url: URL, options: ApiRoutesOpt
   if (!stat.isDirectory()) return Response.json({ error: 'Search path is not a directory' }, { status: 400 })
   const [realRoot, realSearchRoot] = await Promise.all([fs.realpath(options.root), fs.realpath(safePath.fullPath)])
   const realRelative = relative(realRoot, realSearchRoot)
-  if (realRelative === '..' || realRelative.startsWith(`..${sep}`) || realRelative.startsWith(sep)) {
+  if (isOutsideRoot(realRelative)) {
     return Response.json({ error: 'Access denied: Invalid path' }, { status: 403 })
   }
   const hidden = options.showHidden || url.searchParams.get('hidden') === '1'

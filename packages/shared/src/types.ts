@@ -189,6 +189,8 @@ type SearchResultBase = {
   score: number
 }
 
+export type SearchMode = 'name' | 'content'
+
 export type SearchResult =
   | (SearchResultBase & {
       type: 'file'
@@ -214,7 +216,7 @@ export type SearchResponse = {
   query: string
   results: SearchResult[]
   /** Omitted by older servers; requests without mode still search names. */
-  mode?: 'name' | 'content'
+  mode?: SearchMode
   /** Present on current servers. Omitted by older servers. */
   status?: 'searching' | 'complete'
   hasMore?: boolean
