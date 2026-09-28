@@ -289,6 +289,9 @@ browsey start --no-agents # or turn the endpoints off entirely
   the machine — treat it like an SSH key.
 - **cwd**: resolved to the nearest agent project already known to the CLI, else the git
   root, else the target folder — so threads land in real projects and reuse their history.
+- **Models**: `GET /api/agents` serves cached model lists from the signed-in Codex and
+  Claude catalogues, with a small fallback while they load. **Refresh models** in the
+  mobile app forces both catalogues to update, including newly released Codex models.
 - **Workspace trust**: Claude Code may refuse a new workspace before Remote Control can
   register. Browsey detects that prompt and reports the folder as untrusted immediately;
   it never accepts the security prompt on launch. The mobile app then offers an explicit

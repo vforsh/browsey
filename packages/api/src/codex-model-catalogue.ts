@@ -1,18 +1,16 @@
 import { openAppServer } from './codex-app-server.js'
 import { effortOption } from './effort.js'
-import type { AgentEffortOption } from '@vforsh/browsey-shared'
+import type { AgentEffortOption, AgentModelOption } from '@vforsh/browsey-shared'
 
 /**
- * Which reasoning levels a Codex model accepts is the model's own business —
- * `ultra` exists only on the newest, older ones stop at `xhigh` — and the
- * catalogue is the only thing that actually knows. Offering a level a model
- * has never heard of is a rejected launch, so the list is read from
- * `model/list` rather than guessed.
+ * Codex's `model/list` supplies both the models available to this account and
+ * the reasoning levels each accepts. The catalogue is the source of truth for
+ * the picker; a small fallback only covers a cold start or failed read.
  *
  * The catch is cost: reading it means an app server, and a cold one takes tens
  * of seconds. The sheet cannot wait for that, so nothing here is ever awaited
- * on the request path. Callers take whatever is cached — the curated fallback
- * on a cold start — and a refresh runs behind them for the next call.
+ * on the request path. Callers take whatever is cached — or the fallback on a
+ * cold start — and a refresh runs behind them for the next call.
  */
 
 /** Model catalogues change on release day, not on the hour. */
@@ -26,17 +24,21 @@ const MAX_PAGES = 5
 /** Levels every model in the catalogue has advertised, used until it is read. */
 export const FALLBACK_EFFORT_IDS = ['low', 'medium', 'high', 'xhigh']
 
-/** Model id to the levels it advertises, in the catalogue's own order. */
-export type EffortCatalogue = Map<string, AgentEffortOption[]>
+export type CodexCatalogue = {
+  models: AgentModelOption[]
+  hiddenIds: Set<string>
+}
 
 type CatalogueModel = {
   id?: unknown
+  displayName?: unknown
+  hidden?: unknown
   supportedReasoningEfforts?: unknown
 }
 
-let cached: { at: number; catalogue: EffortCatalogue } | null = null
+let cached: { at: number; catalogue: CodexCatalogue } | null = null
 let lastFailureAt = 0
-let inFlight: Promise<void> | null = null
+let inFlight: Promise<CodexCatalogue> | null = null
 
 function readEfforts(raw: unknown): AgentEffortOption[] {
   if (!Array.isArray(raw)) return []
@@ -54,7 +56,7 @@ function readEfforts(raw: unknown): AgentEffortOption[] {
   return options
 }
 
-async function fetchCatalogue(binary: string, env: NodeJS.ProcessEnv): Promise<EffortCatalogue> {
+async function fetchCatalogue(binary: string, env: NodeJS.ProcessEnv): Promise<CodexCatalogue> {
   // Home rather than a project directory: the catalogue is account-wide, and a
   // cwd would only pull in project config that cannot change the answer.
   const server = await openAppServer({
@@ -66,7 +68,9 @@ async function fetchCatalogue(binary: string, env: NodeJS.ProcessEnv): Promise<E
   })
 
   try {
-    const catalogue: EffortCatalogue = new Map()
+    const models: AgentModelOption[] = []
+    const hiddenIds = new Set<string>()
+    const seen = new Set<string>()
     let cursor: string | null = null
 
     for (let page = 0; page < MAX_PAGES; page += 1) {
@@ -76,17 +80,27 @@ async function fetchCatalogue(binary: string, env: NodeJS.ProcessEnv): Promise<E
         LIST_TIMEOUT_MS
       )
       for (const model of (result.data as CatalogueModel[] | undefined) ?? []) {
-        const efforts = readEfforts(model.supportedReasoningEfforts)
-        if (typeof model.id === 'string' && efforts.length > 0) {
-          catalogue.set(model.id, efforts)
+        const id = model.id
+        if (typeof id !== 'string' || !id || seen.has(id)) continue
+        seen.add(id)
+        if (model.hidden === true) {
+          hiddenIds.add(id)
+          continue
         }
+        const displayName = model.displayName
+        models.push({
+          id,
+          label: typeof displayName === 'string' && displayName.trim() ? displayName : id,
+          efforts: readEfforts(model.supportedReasoningEfforts),
+        })
       }
       const next = result.nextCursor
       if (typeof next !== 'string' || next.length === 0) break
       cursor = next
     }
 
-    return catalogue
+    if (models.length === 0) throw new Error('Codex model/list returned no visible models')
+    return { models, hiddenIds }
   } finally {
     server.endStdin()
   }
@@ -96,7 +110,7 @@ async function fetchCatalogue(binary: string, env: NodeJS.ProcessEnv): Promise<E
  * What is known right now, or null before the catalogue has ever been read.
  * Never blocks; a stale or absent entry only schedules the refresh.
  */
-export function cachedEffortCatalogue(binary: string | null, env: NodeJS.ProcessEnv) {
+export function cachedCodexCatalogue(binary: string | null, env: NodeJS.ProcessEnv) {
   const fresh = cached !== null && Date.now() - cached.at < CACHE_TTL_MS
   if (!fresh && binary) scheduleRefresh(binary, env)
   return cached?.catalogue ?? null
@@ -106,19 +120,35 @@ function scheduleRefresh(binary: string, env: NodeJS.ProcessEnv): void {
   if (inFlight) return
   if (Date.now() - lastFailureAt < RETRY_AFTER_FAILURE_MS) return
 
-  inFlight = fetchCatalogue(binary, env)
-    .then((catalogue) => {
-      // An empty answer is not an answer; keeping the old one beats caching a
-      // blank for six hours.
-      if (catalogue.size > 0) cached = { at: Date.now(), catalogue }
-      else lastFailureAt = Date.now()
-    })
+  void readAndCache(binary, env)
     .catch((error) => {
-      lastFailureAt = Date.now()
       const message = error instanceof Error ? error.message : String(error)
       console.warn(`Warning: could not read the codex model catalogue: ${message}`)
+    })
+}
+
+function readAndCache(binary: string, env: NodeJS.ProcessEnv): Promise<CodexCatalogue> {
+  if (inFlight) return inFlight
+  inFlight = fetchCatalogue(binary, env)
+    .then((catalogue) => {
+      cached = { at: Date.now(), catalogue }
+      lastFailureAt = 0
+      return catalogue
+    })
+    .catch((error: unknown) => {
+      lastFailureAt = Date.now()
+      throw error
     })
     .finally(() => {
       inFlight = null
     })
+  return inFlight
+}
+
+/** A button press bypasses the cache age and failure backoff. */
+export function refreshCodexCatalogue(
+  binary: string,
+  env: NodeJS.ProcessEnv
+): Promise<CodexCatalogue> {
+  return readAndCache(binary, env)
 }

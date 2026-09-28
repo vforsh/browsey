@@ -15,7 +15,11 @@ import { findGitRoot } from './git.js'
 import { CodexAppServerError, startCodexThread } from './codex-app-server.js'
 import { claudeThreadTitle } from './claude-thread-title.js'
 import { nameCodexThread } from './codex-thread-title.js'
-import { FALLBACK_EFFORT_IDS, cachedEffortCatalogue } from './codex-model-catalogue.js'
+import {
+  FALLBACK_EFFORT_IDS,
+  cachedCodexCatalogue,
+  refreshCodexCatalogue,
+} from './codex-model-catalogue.js'
 import { cachedClaudeCatalogue, refreshClaudeCatalogue } from './claude-model-catalogue.js'
 import { effortOption } from './effort.js'
 import { ClaudeTrustError, trustClaudeWorkspace } from './claude-trust.js'
@@ -95,12 +99,19 @@ const CLAUDE_FALLBACK_MODELS: CuratedModel[] = [
   { id: 'claude-sonnet-5', label: 'Sonnet 5' },
 ]
 
-/** Codex has no equivalent endpoint, so this list stays hand-picked. */
-const CODEX_MODELS: CuratedModel[] = [
+/** Only shown while the CLI catalogue is loading or unavailable. */
+const CODEX_FALLBACK_MODELS: CuratedModel[] = [
+  { id: 'gpt-6-astra', label: 'GPT-6 Astra' },
+  { id: 'gpt-6-sol', label: 'GPT-6 Sol' },
+  { id: 'gpt-6-luna', label: 'GPT-6 Luna' },
   { id: 'gpt-5.6-sol', label: 'gpt-5.6-sol' },
   { id: 'gpt-5.6-terra', label: 'gpt-5.6-terra' },
   { id: 'gpt-5.6-luna', label: 'gpt-5.6-luna' },
 ]
+
+function codexFallbackEfforts(): AgentEffortOption[] {
+  return FALLBACK_EFFORT_IDS.map((id) => effortOption(id))
+}
 
 type AgentDefinition = {
   id: AgentId
@@ -183,20 +194,20 @@ const AGENT_DEFINITIONS: Record<AgentId, AgentDefinition> = {
     knownBinPaths: ['/opt/homebrew/bin/codex'],
     command: 'codex',
     launchMode: 'prompt',
-    // Curated: `model/list` is authoritative about levels but lists far more
-    // models than are worth offering, so only the levels are read from it.
     describeModels: (binary, env, defaultModel) => {
-      const catalogue = cachedEffortCatalogue(binary, env)
-      // Each model advertises its own levels, and they differ — `ultra` is not
-      // on all of them. Before the catalogue has been read, the set every model
-      // has in common stands in, so the row is never empty and never wrong.
-      const efforts = (modelId: string): AgentEffortOption[] => {
-        const resolved = modelId || defaultModel
-        const advertised = resolved ? catalogue?.get(resolved) : null
-        return advertised ?? FALLBACK_EFFORT_IDS.map((id) => effortOption(id))
-      }
-      const models = CODEX_MODELS.map((model) => ({ ...model, efforts: efforts(model.id) }))
-      return withConfiguredDefault(models, defaultModel, efforts)
+      const catalogue = cachedCodexCatalogue(binary, env)
+      const models = catalogue
+        ? catalogue.models
+        : CODEX_FALLBACK_MODELS.map((model) => ({
+            ...model,
+            efforts: codexFallbackEfforts(),
+          }))
+      // A CLI-hidden model stays hidden even when config.toml names it as the
+      // default. A custom default absent from the catalogue remains usable.
+      const visibleDefault = defaultModel && catalogue?.hiddenIds.has(defaultModel)
+        ? null
+        : defaultModel
+      return withConfiguredDefault(models, visibleDefault, codexFallbackEfforts)
     },
     defaultModelFile: join(homedir(), '.codex/config.toml'),
     readDefaultModel: (contents) => readTopLevelString(contents, 'model'),
@@ -333,13 +344,18 @@ function describeAgent(definition: AgentDefinition, targetCwd: string | null): A
  * which is what the phone's refresh button is for: a model that shipped this
  * morning should be selectable this morning.
  *
- * Only Claude has anything to fetch. Codex's list is curated, so a release
- * cannot appear on it without an edit here anyway, and forcing its level
- * catalogue would mean spawning an app server and waiting tens of seconds for
- * an answer that changes on the same release day the curated list does.
+ * Both catalogues are fetched on demand. The Codex read may start a cold app
+ * server, so it belongs here rather than on the ordinary capabilities path.
  */
 export async function refreshAgentModels(): Promise<void> {
-  await refreshClaudeCatalogue(agentEnv(AGENT_DEFINITIONS['claude-code']))
+  const codexBinary = resolveAgentBinary('codex')
+  const refreshes: Promise<unknown>[] = [
+    refreshClaudeCatalogue(agentEnv(AGENT_DEFINITIONS['claude-code'])),
+  ]
+  if (codexBinary) {
+    refreshes.push(refreshCodexCatalogue(codexBinary, agentEnv(AGENT_DEFINITIONS.codex)))
+  }
+  await Promise.all(refreshes)
 }
 
 export type CapabilitiesTarget = {
