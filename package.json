@@ -22,7 +22,7 @@
     "build": "bun run scripts/build.ts",
     "prepublishOnly": "bun run build",
     "dev:api": "bun --watch packages/cli/src/bin.ts api",
-    "dev:app": "bun --watch packages/cli/src/bin.ts app --api http://localhost:4200",
+    "dev:app": "bun --watch packages/cli/src/bin.ts app",
     "typecheck": "tsc --build",
     "test": "bun test packages"
   },
