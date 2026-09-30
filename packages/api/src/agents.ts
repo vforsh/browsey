@@ -41,6 +41,7 @@ import type {
   AgentLaunchRequest,
   AgentLaunchTarget,
   AgentModelOption,
+  AgentModelRefreshStatus,
   AgentTargetKind,
 } from '@vforsh/browsey-shared'
 
@@ -346,16 +347,28 @@ function describeAgent(definition: AgentDefinition, targetCwd: string | null): A
  *
  * Both catalogues are fetched on demand. The Codex read may start a cold app
  * server, so it belongs here rather than on the ordinary capabilities path.
+ * One failed read must not hide the other agent's fresh catalogue.
  */
-export async function refreshAgentModels(): Promise<void> {
+export async function refreshAgentModels(): Promise<Record<AgentId, AgentModelRefreshStatus>> {
   const codexBinary = resolveAgentBinary('codex')
-  const refreshes: Promise<unknown>[] = [
+  const [claude, codex] = await Promise.allSettled([
     refreshClaudeCatalogue(agentEnv(AGENT_DEFINITIONS['claude-code'])),
-  ]
-  if (codexBinary) {
-    refreshes.push(refreshCodexCatalogue(codexBinary, agentEnv(AGENT_DEFINITIONS.codex)))
+    codexBinary
+      ? refreshCodexCatalogue(codexBinary, agentEnv(AGENT_DEFINITIONS.codex))
+      : Promise.resolve(null),
+  ])
+  const status = (result: PromiseSettledResult<unknown>): AgentModelRefreshStatus =>
+    result.status === 'fulfilled'
+      ? { status: 'refreshed' }
+      : {
+          status: 'failed',
+          error: result.reason instanceof Error ? result.reason.message : String(result.reason),
+        }
+
+  return {
+    'claude-code': status(claude),
+    codex: codexBinary ? status(codex) : { status: 'unavailable' },
   }
-  await Promise.all(refreshes)
 }
 
 export type CapabilitiesTarget = {

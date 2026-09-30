@@ -385,10 +385,9 @@ async function readCapabilitiesTarget(
  * client updates from one round trip instead of having to sequence a refresh
  * against a fetch.
  *
- * A failure is reported rather than swallowed, because the caller is a person
- * who pressed a button and "nothing new" has to be distinguishable from "could
- * not look". The lists stay usable either way: a failed refresh leaves the last
- * good answer in place, or the curated one.
+ * Every catalogue reports its own outcome, so a Codex failure cannot hide a
+ * freshly fetched Claude list (or vice versa). Failed reads keep the last good
+ * catalogue or the curated fallback.
  */
 async function handleAgentModelRefresh(
   req: Request,
@@ -404,15 +403,10 @@ async function handleAgentModelRefresh(
   }
   const { path } = (body ?? {}) as { path?: unknown }
 
-  try {
-    await refreshAgentModels()
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    return jsonResponse({ error: `Could not refresh the model list: ${message}` }, { status: 502 })
-  }
+  const refresh = await refreshAgentModels()
 
   const target = await readCapabilitiesTarget(typeof path === 'string' ? path : null, options)
-  return jsonResponse(await getAgentCapabilities(target))
+  return jsonResponse({ ...(await getAgentCapabilities(target)), refresh })
 }
 
 async function handleAgentStop(req: Request): Promise<Response> {

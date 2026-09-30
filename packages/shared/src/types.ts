@@ -404,6 +404,15 @@ export type AgentCapabilitiesResponse = {
   agents: AgentDescriptor[]
 }
 
+export type AgentModelRefreshStatus =
+  | { status: 'refreshed' }
+  | { status: 'failed'; error: string }
+  | { status: 'unavailable' }
+
+export type AgentModelRefreshResponse = AgentCapabilitiesResponse & {
+  refresh: Record<AgentId, AgentModelRefreshStatus>
+}
+
 export type AgentTargetKind = 'directory' | 'file' | 'selection'
 
 export type AgentLaunchTarget = {

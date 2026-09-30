@@ -112,6 +112,7 @@ Browsey exposes a simple REST API:
 | `GET /api/git/commit?path=/&hash=<sha>` | Git commit details, stats, navigation, and changed files (`includeAdjacent=0` skips navigation lookup) |
 | `POST /api/git/revert` | Discard changes for one git file |
 | `GET /api/agents?path=/` | Agent capabilities: installed CLIs, model lists and live sessions; `path` adds the working directory a launch would resolve to (**bearer token required**) |
+| `POST /api/agents/models/refresh` | Refresh Claude and Codex catalogues independently; returns capabilities plus each agent's `refresh` status (`refreshed`, `failed` with an error, or `unavailable`) (**bearer token required**) |
 | `GET /api/agents/skills?agent=claude-code&path=/` | Skills the agent would see for a launch at `path`: its global ones plus the project's, from the folder up to the git root (**bearer token required**) |
 | `POST /api/agents/launch` | Start a Codex thread, or open a Claude session (**bearer token required**) |
 | `POST /api/agents/trust` | Trust the resolved launch folder for agents that require it (**bearer token required**) |
@@ -295,7 +296,8 @@ browsey start --no-agents # or turn the endpoints off entirely
   root, else the target folder — so threads land in real projects and reuse their history.
 - **Models**: `GET /api/agents` serves cached model lists from the signed-in Codex and
   Claude catalogues, with a small fallback while they load. **Refresh models** in the
-  mobile app forces both catalogues to update, including newly released Codex models.
+  mobile app requests both catalogues, including newly released Codex models. A failure
+  in one catalogue still returns the other agent's updated list and both refresh statuses.
 - **Workspace trust**: Claude Code may refuse a new workspace before Remote Control can
   register. Browsey detects that prompt and reports the folder as untrusted immediately;
   it never accepts the security prompt on launch. The mobile app then offers an explicit
