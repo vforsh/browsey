@@ -11,8 +11,8 @@ import { generationPrompt, promptTitle, sanitizeGeneratedTitle } from './thread-
  * instantly and renames itself a few seconds later — this runs on the launch's
  * critical path and the user waits for it.
  *
- * That cost is the whole design constraint. A one-shot `claude -p` against the
- * smallest model is around three seconds of startup before it reads a token, and
+ * That cost is the whole design constraint. A one-shot `claude -p` is around
+ * three seconds of startup before it reads a token, and
  * the flags below exist to keep the rest close to nothing:
  *
  *  - `--system-prompt` replaces Claude Code's own, which is long, irrelevant to
@@ -31,11 +31,16 @@ import { generationPrompt, promptTitle, sanitizeGeneratedTitle } from './thread-
  * raise.
  */
 
-/** Smallest and fastest; a title is not a reasoning problem. */
-const TITLE_MODEL = 'haiku'
+/**
+ * Not `haiku`: measured on claude 2.1.284 (2026-09-30), Sonnet at medium effort
+ * returned a better title in ~5.3s warm against Haiku's ~6.9s. The effort is
+ * pinned so a user's default cannot put extra thinking in front of a launch.
+ */
+const TITLE_MODEL = 'sonnet'
+const TITLE_EFFORT = 'medium'
 
 /**
- * Slack over the ~6s a warm run takes. Past this the prompt slice is the better
+ * Slack over the ~5s a warm run takes. Past this the prompt slice is the better
  * title, because the fastest title is the one that does not delay the launch.
  */
 const GENERATION_TIMEOUT_MS = 15_000
@@ -60,6 +65,8 @@ function runTitleTurn({
     '-p',
     '--model',
     TITLE_MODEL,
+    '--effort',
+    TITLE_EFFORT,
     '--strict-mcp-config',
     '--no-session-persistence',
     '--system-prompt',
