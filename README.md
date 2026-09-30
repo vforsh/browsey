@@ -121,6 +121,10 @@ Browsey exposes a simple REST API:
 When the server runs with an [access token](#access-token), *every* row above additionally
 requires an `X-Browsey-Access-Token` header — health included.
 
+The API resolves a symlinked server root to its physical directory for file and Git paths.
+Git changes return a repository path relative to that root, so changed files remain openable
+when the server starts through a symlink such as `~/dev`.
+
 Search ranks exact names, then prefixes, substrings, and fuzzy matches. A completed response adds
 `status: "complete"`, `hasMore`, and `nextCursor` to the existing `query` and `results` fields.
 Pass the returned `jobId` and `cursor=<nextCursor>` to fetch more results. For a large tree,

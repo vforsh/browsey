@@ -1,6 +1,6 @@
 import { networkInterfaces } from 'os'
 import { resolve } from 'path'
-import { existsSync } from 'fs'
+import { existsSync, realpathSync } from 'fs'
 import qrcode from 'qrcode-terminal'
 import { handleApiRequest } from './routes.js'
 import { createReloadSSEResponse, startWatcher, stopWatcher } from './live-reload.js'
@@ -105,7 +105,9 @@ export async function startApiServer(
 
   const apiOptions = {
     serverId: await getServerId(rootPath, options.port),
-    root: rootPath,
+    // Git resolves symlinks in --show-toplevel. Use the same physical root for
+    // served-path comparisons, but retain the configured path for server identity.
+    root: realpathSync(rootPath),
     readonly: options.readonly,
     showHidden: options.showHidden,
     ignorePatterns: options.ignorePatterns,
