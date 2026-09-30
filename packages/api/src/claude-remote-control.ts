@@ -1,4 +1,4 @@
-import { spawn } from 'child_process'
+import { execFileSync, spawn } from 'child_process'
 import {
   accessSync,
   closeSync,
@@ -42,16 +42,16 @@ const SCRIPT_BIN = '/usr/bin/script'
  */
 const SESSIONS_DIR = join(homedir(), '.claude', 'sessions')
 
-/** Registration lands about a second after spawn; the rest is slack. */
-const REGISTER_TIMEOUT_MS = 15_000
+/** An initial prompt can run project hooks for minutes before Claude writes its session file. */
+const REGISTER_TIMEOUT_MS = 5 * 60_000
 
 /**
  * The state file is written before Remote Control finishes registering, so the
- * link shows up a beat after the session does. Waiting for it is what lets a
+ * link can show up well after the session does. Waiting for it is what lets a
  * launch answer with a link instead of making the client poll for one.
  */
-const BRIDGE_TIMEOUT_MS = 8_000
-const POLL_INTERVAL_MS = 150
+const BRIDGE_TIMEOUT_MS = 2 * 60_000
+const POLL_INTERVAL_MS = 500
 
 export class ClaudeRemoteControlError extends Error {
   constructor(
@@ -186,66 +186,99 @@ function delay(ms: number): Promise<void> {
 /** Enough to cover the complete trust screen without rereading an unbounded log. */
 const REGISTRATION_OUTPUT_BYTES = 64 * 1024
 
-/**
- * Ink lays text out with cursor-position escapes instead of spaces. Removing
- * those controls and whitespace reconstructs a stable string to match against.
- */
-export function hasClaudeWorkspaceTrustPrompt(output: string): boolean {
-  const plain = output
+/** Ink lays text out with cursor-position escapes instead of spaces. */
+function compactTerminalOutput(output: string): string {
+  return output
     .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '')
     .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '')
     .replace(/\s/g, '')
-    .toLowerCase()
-  return plain.includes('quicksafetycheck:isthisaprojectyoucreatedoroneyoutrust?')
 }
 
-function registrationNeedsTrust(logPath: string): boolean {
+export function hasClaudeWorkspaceTrustPrompt(output: string): boolean {
+  return compactTerminalOutput(output).toLowerCase().includes(
+    'quicksafetycheck:isthisaprojectyoucreatedoroneyoutrust?'
+  )
+}
+
+function registrationOutput(logPath: string): string {
   try {
     const { size } = statSync(logPath)
-    if (size === 0) return false
+    if (size === 0) return ''
     const start = Math.max(0, size - REGISTRATION_OUTPUT_BYTES)
     const fd = openSync(logPath, 'r')
     try {
       const buffer = Buffer.alloc(size - start)
       readSync(fd, buffer, 0, buffer.length, start)
-      return hasClaudeWorkspaceTrustPrompt(buffer.toString('utf-8'))
+      return buffer.toString('utf-8')
     } finally {
       closeSync(fd)
     }
   } catch {
-    return false
+    return ''
   }
 }
 
-/**
- * The spawned child is `script`, whose pid is not the session's — so the new
- * session is identified by cwd plus not having existed a moment ago.
- */
+type ProcessInfo = { parentPid: number; groupId: number }
+
+/** `script(1)` puts Claude in a *different* process group, but keeps it as a child. */
+function processTable(): Map<number, ProcessInfo> | null {
+  try {
+    const output = execFileSync('/bin/ps', ['-axo', 'pid=,ppid=,pgid='], {
+      encoding: 'utf-8',
+      maxBuffer: 4 * 1024 * 1024,
+    })
+    const table = new Map<number, ProcessInfo>()
+    for (const line of output.split('\n')) {
+      const match = /^\s*(\d+)\s+(\d+)\s+(\d+)\s*$/.exec(line)
+      if (match) {
+        table.set(Number(match[1]), {
+          parentPid: Number(match[2]),
+          groupId: Number(match[3]),
+        })
+      }
+    }
+    return table
+  } catch {
+    return null
+  }
+}
+
+/** A cwd can have aliases and concurrent launches; the wrapper PID is unique. */
 async function awaitRegistration(
-  cwd: string,
+  wrapperPid: number,
   known: Set<string>,
   logPath: string,
   onPhase?: PhaseReporter
-): Promise<ClaudeSession> {
+): Promise<StartedClaudeSession> {
   const deadline = Date.now() + REGISTER_TIMEOUT_MS
   let session: ClaudeSession | null = null
 
   while (Date.now() < deadline && !session) {
-    if (registrationNeedsTrust(logPath)) {
+    if (hasClaudeWorkspaceTrustPrompt(registrationOutput(logPath))) {
       throw new ClaudeRemoteControlError(
         "This folder isn't trusted by Claude Code yet. Trust it, then launch again.",
         'workspace-untrusted'
       )
     }
-    session =
-      listClaudeSessions().find(
-        (candidate) => candidate.cwd === cwd && !known.has(candidate.sessionId)
-      ) ?? null
+    const candidates = listClaudeSessions().filter((candidate) => !known.has(candidate.sessionId))
+    if (candidates.length > 0) {
+      const processes = processTable()
+      session =
+        candidates.find((candidate) => processes?.get(candidate.pid)?.parentPid === wrapperPid) ??
+        null
+    }
+    if (!session && !isAlive(wrapperPid)) {
+      throw new ClaudeRemoteControlError('Claude exited before its Remote Control session could be identified')
+    }
     if (!session) await delay(POLL_INTERVAL_MS)
   }
 
   if (!session) {
-    throw new ClaudeRemoteControlError('Claude did not register a Remote Control session in time')
+    throw new ClaudeRemoteControlError(
+      isAlive(wrapperPid)
+        ? 'Could not identify the Claude session in time. The process was left running; check Claude before launching again.'
+        : 'Claude exited before its Remote Control session could be identified.'
+    )
   }
 
   // A session that never grew a link is still handed back: everything except
@@ -261,11 +294,30 @@ async function awaitRegistration(
     session = listClaudeSessions().find((candidate) => candidate.sessionId === sessionId) ?? session
   }
 
-  return session
+  if (!isAlive(session.pid)) {
+    throw new ClaudeRemoteControlError('Claude exited while its Remote Control link was starting')
+  }
+  return { session }
 }
 
-export type StartedClaudeSession = {
-  session: ClaudeSession
+export type StartedClaudeSession = { session: ClaudeSession }
+
+/** Only a known trust refusal is stopped; a timeout may hide an active session. */
+function stopUntrustedLaunch(wrapperPid: number): void {
+  const processes = processTable()
+  for (const [pid, info] of processes ?? []) {
+    if (info.parentPid !== wrapperPid) continue
+    try {
+      process.kill(info.groupId === pid ? -pid : pid, 'SIGTERM')
+    } catch {
+      // The child already exited.
+    }
+  }
+  try {
+    process.kill(wrapperPid, 'SIGTERM')
+  } catch {
+    // The wrapper already exited.
+  }
 }
 
 /**
@@ -351,22 +403,22 @@ export async function startClaudeSession({
     stdio: ['ignore', logFd, logFd],
     env,
   })
+  // Spawn errors are emitted asynchronously; without a listener they crash the API.
+  child.on('error', (error) => console.warn(`Claude terminal failed: ${error.message}`))
 
   try {
-    const session = await awaitRegistration(cwd, known, logPath, onPhase)
-    child.unref()
-    return { session }
+    if (!child.pid) throw new ClaudeRemoteControlError('Could not start the Claude terminal')
+    return await awaitRegistration(child.pid, known, logPath, onPhase)
   } catch (error) {
-    // A session that never registered is invisible on the phone and would only
-    // sit there burning a process.
-    try {
-      // Detached `script` owns a process group containing Claude. Signalling the
-      // group avoids leaving the blocked child behind when the wrapper exits.
-      if (child.pid) process.kill(-child.pid, 'SIGTERM')
-      else child.kill('SIGTERM')
-    } catch {
-      // Already gone.
+    if (
+      child.pid &&
+      error instanceof ClaudeRemoteControlError &&
+      error.reason === 'workspace-untrusted'
+    ) {
+      stopUntrustedLaunch(child.pid)
     }
     throw error
+  } finally {
+    child.unref()
   }
 }

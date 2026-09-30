@@ -315,7 +315,8 @@ browsey start --no-agents # or turn the endpoints off entirely
 - **Live sessions**: `GET /api/agents` lists the Claude ones, read from Claude's own state
   directory and filtered by whether the process is still alive — so a session started before
   the last browsey restart is still listed and still stoppable. `POST /api/agents/stop` ends
-  one by `sessionId`.
+  one by `sessionId`. A new launch is matched to the Claude child of its `script` process,
+  rather than by cwd: symlinked paths and simultaneous launches can share a directory.
   File and directory context resolves both paths before making them relative, so a served
   symlink does not turn `finances/` into a path that climbs out of the project.
 - **Logs**: stdout/stderr of each run goes to `~/.browsey/agent-runs/<timestamp>-<agent>.log`
@@ -323,8 +324,12 @@ browsey start --no-agents # or turn the endpoints off entirely
 - **Failures**: a Codex launch answers before the run finishes, so if that thread dies
   afterwards the reason is remembered and reported as `lastFailure` on the next
   `GET /api/agents` — which is how the app can tell you "your login expired" instead of
-  silently producing threads that never ran. A Claude session is different: it either
-  registers within a second or the launch fails outright.
+  silently producing threads that never ran. Claude can start the initial prompt and spend
+  minutes in project hooks while Remote Control is still connecting. Browsey keeps the
+  launch stream alive while waiting up to five minutes for its session file and two more
+  for its link. An uncertain registration timeout leaves Claude running rather than closing
+  a potentially active phone session; the failure asks you to inspect Claude before
+  launching again.
 - **Binary resolution**: `BROWSEY_CLAUDE_BIN` / `BROWSEY_CODEX_BIN`, then `~/.local/bin/claude`
   and `/opt/homebrew/bin/codex`, then `PATH` (augmented with those two directories, which
   matters for the launchd-managed instance). Claude additionally needs a controlling
