@@ -316,6 +316,8 @@ browsey start --no-agents # or turn the endpoints off entirely
   directory and filtered by whether the process is still alive — so a session started before
   the last browsey restart is still listed and still stoppable. `POST /api/agents/stop` ends
   one by `sessionId`.
+  File and directory context resolves both paths before making them relative, so a served
+  symlink does not turn `finances/` into a path that climbs out of the project.
 - **Logs**: stdout/stderr of each run goes to `~/.browsey/agent-runs/<timestamp>-<agent>.log`
   (debugging only, no rotation yet).
 - **Failures**: a Codex launch answers before the run finishes, so if that thread dies

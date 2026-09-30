@@ -7,6 +7,7 @@ import {
   openSync,
   readFileSync,
   readSync,
+  realpathSync,
   statSync,
 } from 'fs'
 import { homedir } from 'os'
@@ -488,7 +489,17 @@ export async function resolveThreadCwd(
 
 /** Path of the target relative to the resolved cwd, POSIX-style. */
 function relativeToCwd(cwd: string, targetAbs: string): string {
-  const relativePath = relative(cwd, targetAbs)
+  // Git may report a physical root while the served path uses a symlink.
+  // Resolve both before calculating context, or `personal/finances` becomes
+  // `../../../../Users/.../personal/finances` from the same directory.
+  const physical = (path: string) => {
+    try {
+      return realpathSync(path)
+    } catch {
+      return path
+    }
+  }
+  const relativePath = relative(physical(cwd), physical(targetAbs))
   return relativePath === '' ? '.' : relativePath.split(sep).join('/')
 }
 
