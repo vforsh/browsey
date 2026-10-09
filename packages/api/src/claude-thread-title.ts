@@ -32,12 +32,14 @@ import { generationPrompt, promptTitle, sanitizeGeneratedTitle } from './thread-
  */
 
 /**
- * Not `haiku`: measured on claude 2.1.284 (2026-09-30), Sonnet at medium effort
- * returned a better title in ~5.3s warm against Haiku's ~6.9s. The effort is
- * pinned so a user's default cannot put extra thinking in front of a launch.
+ * Haiku 5.5 at `xhigh`, measured on claude 2.1.295 (2026-10-09): 16/16 titles
+ * followed every rule, ~0.5s faster than Sonnet at medium. Below `xhigh` it
+ * broke the rules on about half — mostly answering in Russian for a Russian
+ * prompt. The full id, not the `haiku` alias, because older CLIs resolve the
+ * alias to Haiku 4.5. The effort is pinned so a user's default cannot change it.
  */
-const TITLE_MODEL = 'sonnet'
-const TITLE_EFFORT = 'medium'
+const TITLE_MODEL = 'claude-haiku-5-5'
+const TITLE_EFFORT = 'xhigh'
 
 /**
  * Slack over the ~5s a warm run takes. Past this the prompt slice is the better
