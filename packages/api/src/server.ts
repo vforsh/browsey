@@ -6,6 +6,7 @@ import { handleApiRequest } from './routes.js'
 import { createReloadSSEResponse, startWatcher, stopWatcher } from './live-reload.js'
 import { getBrowseyServiceType, startBonjourAdvertisement } from './bonjour.js'
 import { getServerId } from './server-identity.js'
+import { purgeTrash, TRASH_DIR_NAME } from './deletion.js'
 import {
   withCors,
   corsPreflightResponse,
@@ -110,8 +111,12 @@ export async function startApiServer(
     root: realpathSync(rootPath),
     readonly: options.readonly,
     showHidden: options.showHidden,
-    ignorePatterns: options.ignorePatterns,
+    ignorePatterns: [...options.ignorePatterns, TRASH_DIR_NAME],
     agents: options.agents,
+  }
+
+  if (!options.readonly) {
+    void purgeTrash(apiOptions.root)
   }
 
   // Start file watcher if enabled

@@ -16,6 +16,7 @@ import { findGitRoot, getGitStatus, getGitLog, getGitCommit, getGitChanges, reve
 import { entryExtension, readDirectoryItems, readSymlinkTarget, toServedPath } from './directory-listing.js'
 import { conditionalJsonResponse } from './conditional.js'
 import { handleSearch } from './search.js'
+import { deletePath } from './deletion.js'
 import {
   AgentLaunchError,
   buildThreadPrompt,
@@ -1398,7 +1399,7 @@ async function handleDelete(req: Request, options: ApiRoutesOptions): Promise<Re
   }
 
   try {
-    await fs.rm(safePath.fullPath, { recursive: true })
+    await deletePath(options.root, safePath.fullPath)
     return jsonResponse({ ok: true })
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code
