@@ -504,10 +504,23 @@ function relativeToCwd(cwd: string, targetAbs: string): string {
 }
 
 /**
- * Empty in, empty out: context without instructions is not worth sending. Only
- * `session` agents can get here blank, and there it is the whole point — the
- * session opens idle in the right directory and the user types the first
- * message themselves.
+ * Stands in for instructions a blank launch has not given yet. Only `session`
+ * agents can launch blank, and the context still has to reach the thread: a
+ * file opened on the phone and launched with an empty field is a thread about
+ * that file, and a session told nothing is a session that never learns which
+ * one it was opened on. This keeps it waiting, which is what blank asked for,
+ * while naming the target.
+ */
+export const DEFERRED_INSTRUCTIONS =
+  'Instructions will follow in the next message. Wait for them.'
+
+/**
+ * Prepends the target context to what the user typed.
+ *
+ * Blank in is not blank out whenever there is context to carry — see
+ * `DEFERRED_INSTRUCTIONS`. The one case that still sends nothing is a directory
+ * launch at the resolved cwd itself: there is no context there beyond the
+ * directory the session already opens in, so it opens idle as before.
  */
 export function buildThreadPrompt({
   kind,
@@ -522,20 +535,23 @@ export function buildThreadPrompt({
   targetAbs: string
   selection?: string
 }): string {
-  if (prompt.trim().length === 0) return ''
-
   const relativePath = relativeToCwd(cwd, targetAbs)
+  const blank = prompt.trim().length === 0
+  const atCwd = kind === 'directory' && relativePath === '.'
+  if (blank && atCwd) return ''
+
+  const body = blank ? DEFERRED_INSTRUCTIONS : prompt
 
   if (kind === 'selection') {
-    return `File: ${relativePath}\n\nSelected excerpt:\n\`\`\`\n${selection ?? ''}\n\`\`\`\n\n${prompt}`
+    return `File: ${relativePath}\n\nSelected excerpt:\n\`\`\`\n${selection ?? ''}\n\`\`\`\n\n${body}`
   }
   if (kind === 'file') {
-    return `File: ${relativePath}\n\n${prompt}`
+    return `File: ${relativePath}\n\n${body}`
   }
-  if (relativePath === '.') {
-    return prompt
+  if (atCwd) {
+    return body
   }
-  return `Work within the subdirectory: ${relativePath}/\n\n${prompt}`
+  return `Work within the subdirectory: ${relativePath}/\n\n${body}`
 }
 
 export type ValidatedLaunchRequest = {
